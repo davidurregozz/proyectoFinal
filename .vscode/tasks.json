@@ -1,0 +1,14 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run Bus Simulator",
+			"type": "shell",
+			"command": "py",
+			"args": [
+				".\\simulador_buses.py"
+			],
+			"isBackground": true
+		}
+	]
+}
