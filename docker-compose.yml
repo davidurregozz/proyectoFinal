@@ -1,0 +1,42 @@
+services:
+  backend:
+    build:
+      context: .
+      target: backend
+    image: simulador-buses-backend
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      # Optional; taken from the host environment, never stored in the image.
+      TOMTOM_API_KEY: ${TOMTOM_API_KEY:-}
+    volumes:
+      - simulador-data:/app/data
+    restart: unless-stopped
+
+  # Start with: docker compose --profile gui up
+  # Requires an X server on the host (VcXsrv/X410 on Windows, XQuartz on macOS).
+  dashboard:
+    build:
+      context: .
+      target: dashboard
+    image: simulador-buses-dashboard
+    profiles: ["gui"]
+    environment:
+      SIMULADOR_API_URL: http://backend:8000
+      DISPLAY: ${DISPLAY:-host.docker.internal:0.0}
+      STADIA_MAPS_API_KEY: ${STADIA_MAPS_API_KEY:-}
+      CARTO_API_KEY: ${CARTO_API_KEY:-}
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  # Run with: docker compose --profile test run --rm tests
+  tests:
+    build:
+      context: .
+      target: base
+    profiles: ["test"]
+    command: ["python", "-m", "unittest", "discover", "tests"]
+
+volumes:
+  simulador-data:

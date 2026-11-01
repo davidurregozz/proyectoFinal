@@ -1,10 +1,14 @@
 """Start the local FastAPI server."""
 
+import os
+
 import uvicorn
 
 
 def main():
-    uvicorn.run("backend.api:app", host="127.0.0.1", port=8000)
+    host = os.environ.get("SIMULADOR_HOST", "127.0.0.1")
+    port = int(os.environ.get("SIMULADOR_PORT", "8000"))
+    uvicorn.run("backend.api:app", host=host, port=port)
 
 
 if __name__ == "__main__":

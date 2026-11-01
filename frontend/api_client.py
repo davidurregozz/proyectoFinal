@@ -1,6 +1,7 @@
 """HTTP client used by the desktop dashboard to access the REST backend."""
 
 import json
+import os
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -11,7 +12,9 @@ class ApiError(RuntimeError):
 
 
 class ApiClient:
-    def __init__(self, base_url="http://127.0.0.1:8000", timeout=2):
+    def __init__(self, base_url=None, timeout=2):
+        if base_url is None:
+            base_url = os.environ.get("SIMULADOR_API_URL", "http://127.0.0.1:8000")
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
