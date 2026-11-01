@@ -164,6 +164,12 @@ class Simulador(tk.Tk):
                                sum(p[1] for p in todos) / len(todos))
         self.mapa.set_zoom(13)
 
+        self.zona_congestion = self.mapa.set_polygon(              # naranja pastel
+            [tuple(point) for point in self.snapshot["congestion_zone"]["polygon"]],
+            fill_color="#FFCC99", outline_color="#F4A261", border_width=2,
+            name="Zona de congestión",
+        )
+
         self.trazos_rutas = {}
         self.marcadores_paradas = {}
         self._render_route_layers()

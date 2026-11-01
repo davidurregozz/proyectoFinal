@@ -4,6 +4,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 
+from backend.congestion import REDUCCION_MAX, REDUCCION_MIN, ZONA_CONGESTION
 from backend.database import Database
 from backend.simulation import Bus, Ruta, texto_espera
 from backend.traffic import (
@@ -146,8 +147,7 @@ class TransitService:
             bus_states = []
             arrivals = []
             for bus in buses:
-                phase = bus.fase(self._elapsed)
-                lat, lon, next_stop, remaining = bus.ruta.estado(phase)
+                lat, lon, next_stop, remaining = bus.estado(self._elapsed)
                 bus_states.append({
                     "name": bus.nombre,
                     "route_code": bus.ruta.codigo,
@@ -160,7 +160,7 @@ class TransitService:
                     "arrival_time": (clock + timedelta(seconds=remaining)).strftime("%H:%M"),
                 })
                 if selected_stop:
-                    result = bus.ruta.segundos_hasta(phase, selected_stop)
+                    result = bus.segundos_hasta(self._elapsed, selected_stop)
                     if result:
                         seconds, direction = result
                         arrivals.append({
@@ -184,6 +184,11 @@ class TransitService:
                 "paused": control["paused"],
                 "factor": control["factor"],
                 "traffic": dict(self._traffic_status),
+                "congestion_zone": {
+                    "polygon": ZONA_CONGESTION,
+                    "min_slowdown": REDUCCION_MIN,
+                    "max_slowdown": REDUCCION_MAX,
+                },
             }
 
     def _route_with_traffic(self, route_data):

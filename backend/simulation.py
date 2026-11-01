@@ -3,6 +3,7 @@
 import math
 from bisect import bisect_right
 
+from backend.congestion import dividir_segmento, reduccion_para
 from backend.seed_data import ESPERA_EN_PARADA_S
 
 
@@ -144,43 +145,32 @@ class Ruta:
         else:
             orden = list(range(n)) + list(range(n - 2, -1, -1))    # ida y vuelta
 
-        # horario = lista de (t_llegada, t_salida, indice_parada, sentido)
-        self.horario = []
-        self._tramos_horario = []
-        self._duraciones_tramos_horario = []
-        t = 0.0
-        for k, idx in enumerate(orden):
-            if k > 0:
-                tramo = self._tramo_entre(orden[k - 1], idx)
-                distancia = sum(
-                    distancia_coordenadas_m(a, b)
-                    for a, b in zip(tramo, tramo[1:])
-                )
-                duracion = self._duracion_tramo(orden[k - 1], idx, distancia / velocidad_ms)
-                t += duracion
-            if k == len(orden) - 1:
-                break                 # regresó al inicio: aquí se cierra el ciclo
+        # Para cada salida de parada: (indice_parada, sentido), las piezas del
+        # tramo siguiente partidas por la zona de congestión y su duración base.
+        self._salidas = []
+        self._piezas_tramos = []
+        self._duraciones_base = []
+        for k, idx in enumerate(orden[:-1]):
             if self.circular:
                 sentido = "Circular"
             elif k < n - 1:
                 sentido = self.paradas[-1][0]     # va hacia la última parada
             else:
                 sentido = self.paradas[0][0]      # viene de regreso
-            self.horario.append((t, t + ESPERA_EN_PARADA_S, idx, sentido))
-            self._tramos_horario.append(
-                self._tramo_entre(idx, orden[k + 1]))
-            self._duraciones_tramos_horario.append(
-                self._duracion_tramo(
-                    idx,
-                    orden[k + 1],
-                    self._distancia_tramo(self._tramo_entre(idx, orden[k + 1]))
-                    / velocidad_ms,
-                )
-            )
-            t += ESPERA_EN_PARADA_S
+            tramo = self._tramo_entre(idx, orden[k + 1])
+            self._salidas.append((idx, sentido))
+            self._piezas_tramos.append([
+                (inicio, fin, distancia_coordenadas_m(inicio, fin), en_zona)
+                for a, b in zip(tramo, tramo[1:])
+                for inicio, fin, en_zona in dividir_segmento(a, b)
+            ])
+            self._duraciones_base.append(self._duracion_tramo(
+                idx, orden[k + 1], self._distancia_tramo(tramo) / velocidad_ms
+            ))
 
-        self.ciclo_s = t                                   # duración del ciclo
-        self._llegadas = [h[0] for h in self.horario]      # para búsqueda rápida
+        self._horarios = {}
+        # horario = lista de (t_llegada, t_salida, indice_parada, sentido)
+        self.horario, self.ciclo_s = self._horario(0.0)[:2]    # sin congestión
 
     def _tramo_entre(self, origen, destino):
         """Devuelve los puntos del trazado entre dos paradas consecutivas."""
@@ -220,19 +210,39 @@ class Ruta:
             for start, end in zip(tramo, tramo[1:])
         )
 
-    @staticmethod
-    def _posicion_en_tramo(tramo, distancia):
-        """Interpola la posición a una distancia recorrida sobre el trazado."""
-        for inicio, fin in zip(tramo, tramo[1:]):
-            largo = distancia_coordenadas_m(inicio, fin)
-            if distancia <= largo:
-                avance = distancia / largo if largo else 0.0
-                return (
-                    inicio[0] + (fin[0] - inicio[0]) * avance,
-                    inicio[1] + (fin[1] - inicio[1]) * avance,
-                )
-            distancia -= largo
-        return tramo[-1]
+    def _horario(self, reduccion):
+        """
+        Horario del ciclo cuando la velocidad dentro de la zona de congestión
+        se reduce en 'reduccion' (0.5 = 50 % más lento).
+        Devuelve (horario, ciclo_s, llegadas, tiempos_piezas_por_tramo).
+        """
+        if reduccion in self._horarios:
+            return self._horarios[reduccion]
+        horario = []
+        tiempos_tramos = []
+        t = 0.0
+        for (idx, sentido), piezas, duracion_base in zip(
+            self._salidas, self._piezas_tramos, self._duraciones_base
+        ):
+            horario.append((t, t + ESPERA_EN_PARADA_S, idx, sentido))
+            t += ESPERA_EN_PARADA_S
+            distancia = sum(pieza[2] for pieza in piezas)
+            if distancia:
+                segundos_por_m = duracion_base / distancia
+                tiempos = [
+                    largo * segundos_por_m / ((1 - reduccion) if en_zona else 1)
+                    for _, _, largo, en_zona in piezas
+                ]
+            else:
+                tiempos = [0.0] * len(piezas)
+            tiempos_tramos.append(tiempos)
+            t += sum(tiempos) if distancia else duracion_base
+        resultado = (horario, t, [h[0] for h in horario], tiempos_tramos)
+        self._horarios[reduccion] = resultado
+        return resultado
+
+    def ciclo_con_congestion(self, reduccion):
+        return self._horario(reduccion)[1]
 
     def trazado(self):
         """Lista de (lat, lon) para dibujar la línea de la ruta."""
@@ -240,58 +250,83 @@ class Ruta:
             return self.coordenadas + self.coordenadas_regreso[1:]
         return self.coordenadas
 
-    def estado(self, fase):
+    def estado(self, fase, reduccion=0.0):
         """
         Dónde está un bus cuando lleva 'fase' segundos dentro del ciclo.
+        'reduccion' es cuánto baja su velocidad en la zona de congestión.
         Devuelve (lat, lon, próxima_parada, segundos_que_faltan).
         Si está detenido en una parada, segundos_que_faltan = 0.
         """
-        i = bisect_right(self._llegadas, fase) - 1
-        _, t_salida, idx, _ = self.horario[i]
+        horario, ciclo_s, llegadas, tiempos_tramos = self._horario(reduccion)
+        i = bisect_right(llegadas, fase) - 1
+        _, t_salida, idx, _ = horario[i]
         nombre, lat, lon = self.paradas[idx]
         if fase <= t_salida:                               # detenido en la parada
             return lat, lon, nombre, 0.0
 
-        j = (i + 1) % len(self.horario)                    # siguiente parada
-        t_siguiente = self.horario[j][0] if j else self.ciclo_s
-        nombre2 = self.paradas[self.horario[j][2]][0]
-        duracion_tramo = self._duraciones_tramos_horario[i]
-        distancia_tramo = self._distancia_tramo(self._tramos_horario[i])
-        fraccion_recorrida = min(
-            1.0, max(0.0, (fase - t_salida) / duracion_tramo)
-        )
-        distancia = distancia_tramo * fraccion_recorrida
-        posicion = self._posicion_en_tramo(self._tramos_horario[i], distancia)
+        j = (i + 1) % len(horario)                         # siguiente parada
+        t_siguiente = horario[j][0] if j else ciclo_s
+        nombre2 = self.paradas[horario[j][2]][0]
+        posicion = self.paradas[horario[j][2]][1:]
+        transcurrido = fase - t_salida
+        for (inicio, fin, _, _), tiempo in zip(
+            self._piezas_tramos[i], tiempos_tramos[i]
+        ):
+            if transcurrido <= tiempo:                     # va en esta pieza
+                avance = transcurrido / tiempo if tiempo else 0.0
+                posicion = (
+                    inicio[0] + (fin[0] - inicio[0]) * avance,
+                    inicio[1] + (fin[1] - inicio[1]) * avance,
+                )
+                break
+            transcurrido -= tiempo
         return (*posicion, nombre2, t_siguiente - fase)
 
-    def segundos_hasta(self, fase, nombre_parada):
+    def segundos_hasta(self, fase, nombre_parada, reduccion=0.0):
         """
         Segundos que faltan para que el bus pase por 'nombre_parada'.
         Devuelve (segundos, sentido) o None si la ruta no pasa por ahí.
         """
+        horario, ciclo_s = self._horario(reduccion)[:2]
         mejor = None
-        for t_llegada, t_salida, idx, sentido in self.horario:
+        for t_llegada, t_salida, idx, sentido in horario:
             if self.paradas[idx][0] != nombre_parada:
                 continue
             if t_llegada <= fase <= t_salida:
                 falta = 0.0                                 # ya está ahí
             else:
-                falta = (t_llegada - fase) % self.ciclo_s
+                falta = (t_llegada - fase) % ciclo_s
             if mejor is None or falta < mejor[0]:
                 mejor = (falta, sentido)
         return mejor
 
 
 class Bus:
-    """Un bus es una ruta + un desfase, para que no salgan todos a la vez."""
+    """
+    Un bus es una ruta + un desfase, para que no salgan todos a la vez.
+    Cada bus tiene su propia reducción de velocidad en la zona de congestión.
+    """
 
     def __init__(self, ruta, numero, desfase_s):
         self.ruta = ruta
         self.nombre = f"{ruta.codigo}-{numero}"
         self.desfase_s = desfase_s
 
+    @property
+    def reduccion(self):
+        return reduccion_para(self.nombre)
+
     def fase(self, t_sim):
-        return (t_sim + self.desfase_s) % self.ruta.ciclo_s
+        ciclo_s = self.ruta.ciclo_con_congestion(self.reduccion)
+        return (t_sim + self.desfase_s) % ciclo_s
+
+    def estado(self, t_sim):
+        return self.ruta.estado(self.fase(t_sim), self.reduccion)
+
+    def segundos_hasta(self, t_sim, nombre_parada):
+        return self.ruta.segundos_hasta(
+            self.fase(t_sim), nombre_parada, self.reduccion
+        )
 
 
 def crear_flota(datos_rutas):
