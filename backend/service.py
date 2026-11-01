@@ -158,6 +158,7 @@ class TransitService:
                     "seconds_remaining": remaining,
                     "remaining_text": texto_espera(remaining),
                     "arrival_time": (clock + timedelta(seconds=remaining)).strftime("%H:%M"),
+                    "speed_kmh": round(bus.velocidad_actual_kmh(self._elapsed), 1),
                 })
                 if selected_stop:
                     result = bus.segundos_hasta(self._elapsed, selected_stop)

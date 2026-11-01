@@ -67,6 +67,19 @@ class CongestionTests(unittest.TestCase):
         metros = Ruta._distancia_tramo([(lat1, lon1), (lat2, lon2)])
         self.assertAlmostEqual(metros, 10 * 10 * (1 - reduccion), delta=0.5)
 
+    def test_speed_is_zero_at_stop_and_reduced_inside_zone(self):
+        ruta = Ruta(ruta_que_cruza_la_zona())
+        reduccion = 0.6
+        _, _, _, tiempos = ruta._horario(reduccion)
+        self.assertEqual(ruta.velocidad_actual_kmh(1, reduccion), 0.0)
+        self.assertAlmostEqual(
+            ruta.velocidad_actual_kmh(ESPERA_EN_PARADA_S + 1, reduccion), 36, places=3
+        )
+        en_zona = ESPERA_EN_PARADA_S + tiempos[0][0] + 1
+        self.assertAlmostEqual(
+            ruta.velocidad_actual_kmh(en_zona, reduccion), 36 * (1 - reduccion), places=3
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

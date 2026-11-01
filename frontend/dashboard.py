@@ -37,6 +37,7 @@ class RouteView:
 
 class Simulador(tk.Tk):
     VELOCIDADES = {"x1 (tiempo real)": 1, "x5": 5, "x10": 10, "x30": 30, "x60": 60}
+    VELOCIDAD_LENTA_KMH = 15        # por debajo, el bus se marca con un banderín rojo
 
     def __init__(self):
         super().__init__()
@@ -57,6 +58,7 @@ class Simulador(tk.Tk):
         self.geometry("1250x740")
 
         self._iconos = []                       # Tk necesita que guardemos las imágenes
+        self._iconos_bus = {}                   # (color, lento) -> icono
 
         # ── Panel derecho ───────────────────────────────────────────────
         panel = ttk.Frame(self, padding=12, width=400)
@@ -118,8 +120,9 @@ class Simulador(tk.Tk):
         ttk.Label(panel, text="Todos los buses",
                   font=("Helvetica", 11, "bold")).pack(anchor="w", pady=(12, 2))
         self.tabla_buses = self._crear_tabla(panel, 8, [
-            ("bus", "Bus", 55), ("proxima", "Próxima parada", 150),
-            ("en", "Llega en", 85), ("hora", "Hora", 55)])
+            ("bus", "Bus", 55), ("proxima", "Próxima parada", 130),
+            ("en", "Llega en", 60), ("hora", "Hora", 45),
+            ("velocidad", "Velocidad", 70)])
 
         # ── Mapa ────────────────────────────────────────────────────────
         zona_mapa = ttk.Frame(self)
@@ -257,6 +260,9 @@ class Simulador(tk.Tk):
             for name, marker in self.marcadores:
                 bus = buses_by_name[name]
                 marker.set_position(bus["latitude"], bus["longitude"])
+                icono = self._icono_bus(bus)
+                if marker.icon is not icono:                # cambió a lento/normal
+                    marker.change_icon(icono)
         if self.vehiculos != getattr(self, "_displayed_vehicles", None):
             self.actualizar_tabla_vehiculos()
             self._displayed_vehicles = [vehicle.copy() for vehicle in self.vehiculos]
@@ -275,7 +281,7 @@ class Simulador(tk.Tk):
                 continue
             marker = self.mapa.set_marker(
                 bus["latitude"], bus["longitude"], text=bus["name"],
-                icon=self._icono(20, bus["color"], "white"),
+                icon=self._icono_bus(bus),
                 text_color=bus["color"], font=("Helvetica", 9, "bold"),
             )
             self.marcadores.append((bus["name"], marker))
@@ -322,16 +328,38 @@ class Simulador(tk.Tk):
         self.actualizar_tablas()
 
     # ── Ayudas para construir la interfaz ──────────────────────────────
-    def _icono(self, diametro, relleno, borde):
-        """Dibuja un círculo de color para usarlo como marcador en el mapa."""
+    def _icono(self, diametro, relleno, borde, banderin=False):
+        """
+        Dibuja un círculo de color para usarlo como marcador en el mapa.
+        Con 'banderin' agrega un banderín rojo arriba a la derecha; el lienzo
+        crece por igual en todos los lados para que el círculo siga centrado.
+        """
         Image, ImageDraw, ImageTk = self._pil
         k = 4                                   # se dibuja grande y se reduce (suaviza)
-        img = Image.new("RGBA", (diametro * k, diametro * k), (0, 0, 0, 0))
-        ImageDraw.Draw(img).ellipse((k, k, diametro * k - k, diametro * k - k),
-                                    fill=relleno, outline=borde, width=3 * k)
-        icono = ImageTk.PhotoImage(img.resize((diametro, diametro), Image.LANCZOS))
+        margen = 9 if banderin else 0
+        lado = diametro + 2 * margen
+        img = Image.new("RGBA", (lado * k, lado * k), (0, 0, 0, 0))
+        dibujo = ImageDraw.Draw(img)
+        dibujo.ellipse(
+            ((margen + 1) * k, (margen + 1) * k,
+             (margen + diametro - 1) * k, (margen + diametro - 1) * k),
+            fill=relleno, outline=borde, width=3 * k)
+        if banderin:
+            asta = (lado - 10) * k
+            dibujo.line((asta, 1 * k, asta, (margen + 7) * k),
+                        fill="#1f2937", width=2 * k)
+            dibujo.polygon([(asta, 1 * k), (lado * k - k, 5 * k), (asta, 9 * k)],
+                           fill="#dc2626", outline="#7f1d1d")
+        icono = ImageTk.PhotoImage(img.resize((lado, lado), Image.LANCZOS))
         self._iconos.append(icono)
         return icono
+
+    def _icono_bus(self, bus):
+        """Icono del bus; lleva banderín rojo si va a menos de 15 km/h."""
+        clave = (bus["color"], bus["speed_kmh"] < self.VELOCIDAD_LENTA_KMH)
+        if clave not in self._iconos_bus:
+            self._iconos_bus[clave] = self._icono(20, clave[0], "white", banderin=clave[1])
+        return self._iconos_bus[clave]
 
     def _crear_tabla(self, padre, filas, columnas):
         tabla = ttk.Treeview(padre, columns=[c[0] for c in columnas],
@@ -900,7 +928,7 @@ class Simulador(tk.Tk):
             self.tabla_buses.insert(
                 "", "end", tags=(bus["route_code"],), values=(
                     bus["name"], bus["next_stop"], bus["remaining_text"],
-                    bus["arrival_time"],
+                    bus["arrival_time"], f"{bus['speed_kmh']:.1f} km/h",
                 )
             )
 

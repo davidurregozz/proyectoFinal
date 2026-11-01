@@ -282,6 +282,21 @@ class Ruta:
             transcurrido -= tiempo
         return (*posicion, nombre2, t_siguiente - fase)
 
+    def velocidad_actual_kmh(self, fase, reduccion=0.0):
+        """Velocidad del bus en km/h en ese instante (0 si está en una parada)."""
+        horario, _, llegadas, tiempos_tramos = self._horario(reduccion)
+        i = bisect_right(llegadas, fase) - 1
+        transcurrido = fase - horario[i][1]
+        if transcurrido < 0:                               # detenido en la parada
+            return 0.0
+        for (_, _, largo, _), tiempo in zip(
+            self._piezas_tramos[i], tiempos_tramos[i]
+        ):
+            if tiempo and transcurrido <= tiempo:          # va en esta pieza
+                return largo / tiempo * 3.6
+            transcurrido -= tiempo
+        return 0.0
+
     def segundos_hasta(self, fase, nombre_parada, reduccion=0.0):
         """
         Segundos que faltan para que el bus pase por 'nombre_parada'.
@@ -322,6 +337,9 @@ class Bus:
 
     def estado(self, t_sim):
         return self.ruta.estado(self.fase(t_sim), self.reduccion)
+
+    def velocidad_actual_kmh(self, t_sim):
+        return self.ruta.velocidad_actual_kmh(self.fase(t_sim), self.reduccion)
 
     def segundos_hasta(self, t_sim, nombre_parada):
         return self.ruta.segundos_hasta(
