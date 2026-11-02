@@ -91,13 +91,6 @@ class VehicleInput(BaseModel):
         return value
 
 
-class ControlInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    paused: bool
-    factor: float
-
-
 @asynccontextmanager
 async def lifespan(app):
     service = TransitService()
@@ -153,6 +146,17 @@ def delete_route(code: str, service: ServiceDependency):
     return {"message": "Ruta y vehículos asociados eliminados."}
 
 
+@app.delete("/api/routes/{code}/buses")
+def remove_route_bus(code: str, service: ServiceDependency):
+    try:
+        service.remove_route_bus(code)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return {"message": "Bus retirado de la ruta."}
+
+
 @app.post("/api/vehicles", status_code=status.HTTP_201_CREATED)
 def create_vehicle(vehicle: VehicleInput, service: ServiceDependency):
     try:
@@ -164,9 +168,11 @@ def create_vehicle(vehicle: VehicleInput, service: ServiceDependency):
     return {"message": "Vehículo registrado.", "placa": vehicle.placa}
 
 
-@app.put("/api/simulation/control")
-def update_control(control: ControlInput, service: ServiceDependency):
-    if control.factor not in {1, 5, 10, 30, 60}:
-        raise HTTPException(status_code=422, detail="Velocidad de simulación inválida.")
-    service.set_control(control.paused, control.factor)
-    return {"paused": control.paused, "factor": control.factor}
+@app.delete("/api/vehicles/{plate}")
+def delete_vehicle(plate: str, service: ServiceDependency):
+    try:
+        service.delete_vehicle(plate)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return {"message": "Vehículo eliminado."}
+

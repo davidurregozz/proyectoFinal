@@ -3,7 +3,7 @@
 import json
 import os
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 
@@ -53,12 +53,11 @@ class ApiClient:
     def delete_route(self, code):
         return self._request("DELETE", f"/api/routes/{code}")
 
+    def remove_route_bus(self, code):
+        return self._request("DELETE", f"/api/routes/{quote(code, safe='')}/buses")
+
     def create_vehicle(self, vehicle):
         return self._request("POST", "/api/vehicles", vehicle)
 
-    def set_control(self, paused, factor):
-        return self._request(
-            "PUT",
-            "/api/simulation/control",
-            {"paused": paused, "factor": factor},
-        )
+    def delete_vehicle(self, plate):
+        return self._request("DELETE", f"/api/vehicles/{quote(plate, safe='')}")

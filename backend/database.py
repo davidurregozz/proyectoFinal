@@ -1,4 +1,4 @@
-"""SQLite persistence for routes, vehicles, and simulation controls."""
+"""SQLite persistence for routes and vehicles."""
 
 import json
 import os
@@ -6,7 +6,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-from backend.seed_data import RUTAS, VEHICULOS_INICIALES
+from backend.seed_data import RUTAS, RUTAS_ORIGINALES, VEHICULOS_INICIALES
 
 
 DATABASE_PATH = Path(
@@ -60,23 +60,24 @@ class Database:
                     status TEXT NOT NULL,
                     active_bus INTEGER NOT NULL DEFAULT 0 CHECK (active_bus IN (0, 1))
                 );
-                CREATE TABLE IF NOT EXISTS simulation_control (
-                    id INTEGER PRIMARY KEY CHECK (id = 1),
-                    paused INTEGER NOT NULL DEFAULT 0 CHECK (paused IN (0, 1)),
-                    speed_factor REAL NOT NULL DEFAULT 10
+                CREATE TABLE IF NOT EXISTS applied_seed_routes (
+                    seed_code TEXT PRIMARY KEY
                 );
-                INSERT OR IGNORE INTO simulation_control (id, paused, speed_factor)
-                VALUES (1, 0, 10);
                 """
             )
             has_routes = connection.execute(
                 "SELECT 1 FROM routes LIMIT 1"
             ).fetchone()
             if has_routes:
+                self._migrate_seed_routes(connection)
                 return
 
             for route in RUTAS:
                 self._insert_route(connection, route)
+            connection.executemany(
+                "INSERT INTO applied_seed_routes (seed_code) VALUES (?)",
+                [(self._seed_code(route),) for route in RUTAS],
+            )
             route_codes = {
                 row["name"]: row["code"]
                 for row in connection.execute("SELECT code, name FROM routes")
@@ -100,8 +101,60 @@ class Database:
                 )
 
     @staticmethod
+    def _seed_code(route):
+        return route.get("codigo", route["nombre"].split()[0])
+
+    def _migrate_seed_routes(self, connection):
+        """
+        Pone al día una base existente: agrega una sola vez las rutas de la
+        semilla que no tenía (si el usuario la borra después, no vuelve) y
+        completa el municipio que las rutas originales guardaban vacío.
+        """
+        applied = {
+            row["seed_code"]
+            for row in connection.execute("SELECT seed_code FROM applied_seed_routes")
+        }
+        if not applied:
+            applied = set(RUTAS_ORIGINALES)
+            connection.executemany(
+                "INSERT INTO applied_seed_routes (seed_code) VALUES (?)",
+                [(code,) for code in applied],
+            )
+        for route in RUTAS:
+            seed_code = self._seed_code(route)
+            if route.get("municipio"):
+                connection.execute(
+                    "UPDATE routes SET municipality = ? "
+                    "WHERE code = ? AND name = ? AND municipality = ''",
+                    (route["municipio"], seed_code, route["nombre"]),
+                )
+            if seed_code in applied:
+                continue
+            existing = connection.execute("SELECT code, name FROM routes").fetchall()
+            codes = {row["code"] for row in existing}
+            destination = route["nombre"].split(" ", 1)[1]
+            # Si ya hay una ruta con el mismo recorrido (con cualquier código) no se duplica.
+            if not any(row["name"].split(" ", 1)[-1] == destination for row in existing):
+                if seed_code in codes:
+                    # El usuario ya creó una ruta con ese código: se usa el siguiente libre.
+                    number = max(
+                        (int(code[1:]) for code in codes
+                         if code[:1] == "R" and code[1:].isdigit()),
+                        default=0,
+                    ) + 1
+                    route = {
+                        **route,
+                        "codigo": f"R{number}",
+                        "nombre": f"R{number} {destination}",
+                    }
+                self._insert_route(connection, route)
+            connection.execute(
+                "INSERT INTO applied_seed_routes (seed_code) VALUES (?)", (seed_code,)
+            )
+
+    @staticmethod
     def _insert_route(connection, route):
-        code = route.get("codigo", route["nombre"].split()[0])
+        code = Database._seed_code(route)
         connection.execute(
             """
             INSERT INTO routes
@@ -157,6 +210,14 @@ class Database:
     def delete_route(self, code):
         with self.connect() as connection:
             cursor = connection.execute("DELETE FROM routes WHERE code = ?", (code,))
+            return cursor.rowcount > 0
+
+    def remove_route_bus(self, code):
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE routes SET bus_count = bus_count - 1 WHERE code = ? AND bus_count > 1",
+                (code,),
+            )
             return cursor.rowcount > 0
 
     def list_vehicles(self):
@@ -218,16 +279,7 @@ class Database:
                 ),
             )
 
-    def get_control(self):
+    def delete_vehicle(self, plate):
         with self.connect() as connection:
-            row = connection.execute(
-                "SELECT paused, speed_factor FROM simulation_control WHERE id = 1"
-            ).fetchone()
-            return {"paused": bool(row["paused"]), "factor": row["speed_factor"]}
-
-    def update_control(self, paused, factor):
-        with self.connect() as connection:
-            connection.execute(
-                "UPDATE simulation_control SET paused = ?, speed_factor = ? WHERE id = 1",
-                (int(paused), factor),
-            )
+            cursor = connection.execute("DELETE FROM vehicles WHERE plate = ?", (plate,))
+            return cursor.rowcount > 0

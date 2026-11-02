@@ -1,33 +1,69 @@
 """Application services and server-side simulation state."""
 
+import json
+import logging
 import os
 import threading
-import time
 from datetime import datetime, timedelta, timezone
 
-from backend.congestion import REDUCCION_MAX, REDUCCION_MIN, ZONA_CONGESTION
+from backend.congestion import (
+    REDUCCION_MAX,
+    REDUCCION_MIN,
+    ZONA_CONGESTION,
+    punto_en_zona,
+)
 from backend.database import Database
-from backend.simulation import Bus, Ruta, texto_espera
+from backend.hexagons import celdas_sobre_trazados
+from backend.simulation import Bus, Ruta, distancia_coordenadas_m, texto_espera
 from backend.traffic import (
     TrafficRoutingError,
+    create_traffic_flow,
     create_traffic_router,
     log_traffic_failure,
 )
 
+# Colombia no cambia de horario: UTC-5 todo el año. Se fija aquí porque el
+# contenedor de Docker corre en UTC.
+ZONA_HORARIA = timezone(timedelta(hours=-5), "COT")
+
+# Un hexágono es "lento" cuando su vía va por debajo del 80 % de la velocidad libre.
+UMBRAL_LENTO = 0.8
+REDUCCION_MAX_TRAFICO = 0.85
+
+
+def clasificar_trafico(current_kmh, free_kmh, closed=False):
+    """Devuelve (reducción de velocidad, severidad o None si el tráfico fluye)."""
+    if closed:
+        return REDUCCION_MAX_TRAFICO, "severo"
+    ratio = min(1.0, current_kmh / free_kmh)
+    reduccion = min(REDUCCION_MAX_TRAFICO, 1 - ratio)
+    if ratio >= UMBRAL_LENTO:
+        return reduccion, None
+    if ratio >= 0.6:
+        return reduccion, "moderado"
+    if ratio >= 0.4:
+        return reduccion, "alto"
+    return reduccion, "severo"
+
 
 class TransitService:
-    TRAFFIC_REFRESH_SECONDS = 300
+    # Routing (about 2 calls per route) plus one Traffic Flow call per hexagon each
+    # refresh; 600 s keeps a normal working day inside TomTom's free daily quota.
+    TRAFFIC_REFRESH_SECONDS = int(os.environ.get("TOMTOM_REFRESCO_S", "600"))
     # TomTom durations are divided by this so buses run 60 % faster than live traffic.
     TRAFFIC_SPEED_FACTOR = float(os.environ.get("SIMULADOR_FACTOR_VELOCIDAD", "1.6"))
+    HEX_RADIUS_M = float(os.environ.get("TRAFICO_HEX_RADIO_M", "600"))
+    HEX_MAX = int(os.environ.get("TRAFICO_HEX_MAX", "30"))
 
     def __init__(self, database=None):
         self.database = database or Database()
         self.database.initialize()
         self._lock = threading.RLock()
-        self._elapsed = 0.0
-        self._last_tick = time.monotonic()
         self._traffic_router = create_traffic_router()
+        self._traffic_flow = create_traffic_flow()
         self._traffic_routes = {}
+        self._traffic_cells = None          # None: sin medición, se usa la zona simulada
+        self._route_cache = {}
         self._traffic_stop = threading.Event()
         self._traffic_refresh_requested = threading.Event()
         self._traffic_thread = None
@@ -60,6 +96,7 @@ class TransitService:
     def _traffic_refresh_loop(self):
         while not self._traffic_stop.is_set():
             self._refresh_traffic_routes()
+            self._refresh_traffic_cells()
             self._traffic_refresh_requested.wait(self.TRAFFIC_REFRESH_SECONDS)
             self._traffic_refresh_requested.clear()
 
@@ -111,27 +148,75 @@ class TransitService:
                     "updated_at": previous_update,
                 }
 
-    def set_control(self, paused, factor):
+    def _refresh_traffic_cells(self):
+        """Mide con TomTom Traffic Flow la velocidad real en cada hexágono de los recorridos."""
+        if self._traffic_flow is None:
+            return
         with self._lock:
-            self._advance()
-            self.database.update_control(paused, factor)
-            self._last_tick = time.monotonic()
+            routes = [self._route_with_traffic(route) for route in self.database.list_routes()]
+        trazados = [route["coordenadas"] for route in routes] + [
+            route["coordenadas_regreso"] for route in routes if route["coordenadas_regreso"]
+        ]
+        cells = []
+        failures = 0
+        for cell in celdas_sobre_trazados(trazados, self.HEX_RADIUS_M, self.HEX_MAX):
+            try:
+                speed = self._traffic_flow.speed(cell["consulta"])
+            except TrafficRoutingError as error:
+                failures += 1
+                if not cells and failures >= 3:     # clave sin Traffic API o sin conexión
+                    logging.warning("TomTom Traffic Flow no disponible: %s", error)
+                    break
+                continue
+            reduccion, severidad = clasificar_trafico(
+                speed["current_kmh"], speed["free_kmh"], speed["closed"]
+            )
+            cells.append({**cell, **speed, "reduccion": reduccion, "severidad": severidad})
 
-    def _advance(self):
-        now = time.monotonic()
-        control = self.database.get_control()
-        if not control["paused"]:
-            self._elapsed += (now - self._last_tick) * control["factor"]
-        self._last_tick = now
+        with self._lock:
+            if cells:                               # si todo falla se conserva la medición anterior
+                self._traffic_cells = {
+                    "cells": cells,
+                    "updated_at": datetime.now(ZONA_HORARIA).strftime("%H:%M"),
+                }
+
+    def _zones(self):
+        """Zonas lentas medidas por TomTom, o None para usar la zona simulada."""
+        if self._traffic_cells is None:
+            return None
+        return [
+            {"poligono": cell["poligono"], "reduccion": cell["reduccion"]}
+            for cell in self._traffic_cells["cells"] if cell["severidad"]
+        ]
+
+    def _build_route(self, route_data, zones):
+        # Ruta precalcula geometría y horarios; se reutiliza mientras nada cambie.
+        key = json.dumps([route_data, zones], sort_keys=True)
+        cached = self._route_cache.get(route_data["codigo"])
+        if cached and cached[0] == key:
+            return cached[1]
+        route = Ruta(route_data, zones)
+        self._route_cache[route_data["codigo"]] = (key, route)
+        return route
 
     def snapshot(self, selected_stop=""):
         with self._lock:
-            self._advance()
-            control = self.database.get_control()
+            # Tiempo real: los buses se ubican según los segundos transcurridos hoy.
+            clock = datetime.now(ZONA_HORARIA)
+            elapsed = (
+                clock - clock.replace(hour=0, minute=0, second=0, microsecond=0)
+            ).total_seconds()
+            zones = self._zones()
             routes = [
-                Ruta(self._route_with_traffic(route_data))
+                self._build_route(
+                    self._route_with_traffic(route_data, free_flow=zones is not None),
+                    zones,
+                )
                 for route_data in self.database.list_routes()
             ]
+            self._route_cache = {
+                route.codigo: self._route_cache[route.codigo] for route in routes
+            }
             route_data = [self._serialize_route(route) for route in routes]
             routes_by_name = {route.nombre: route for route in routes}
             buses = []
@@ -146,12 +231,11 @@ class TransitService:
                 bus.nombre = vehicle["placa"]
                 buses.append(bus)
 
-            clock = datetime.now() + timedelta(seconds=self._elapsed)
             bus_states = []
             arrivals = []
             for bus in buses:
-                lat, lon, next_stop, remaining = bus.estado(self._elapsed)
-                speed_kmh = round(bus.velocidad_actual_kmh(self._elapsed), 1)
+                lat, lon, next_stop, remaining = bus.estado(elapsed)
+                speed_kmh = round(bus.velocidad_actual_kmh(elapsed), 1)
                 bus_states.append({
                     "name": bus.nombre,
                     "route_code": bus.ruta.codigo,
@@ -165,7 +249,7 @@ class TransitService:
                     "speed_kmh": speed_kmh,
                 })
                 if selected_stop:
-                    result = bus.segundos_hasta(self._elapsed, selected_stop)
+                    result = bus.segundos_hasta(elapsed, selected_stop)
                     if result:
                         seconds, direction = result
                         arrivals.append({
@@ -180,35 +264,94 @@ class TransitService:
                             "speed_kmh": speed_kmh,
                         })
             arrivals.sort(key=lambda arrival: arrival["seconds_remaining"])
+            stops = self._stops(route_data)
             return {
                 "routes": route_data,
                 "vehicles": self.database.list_vehicles(),
                 "buses": bus_states,
                 "arrivals": arrivals,
-                "stops": self._stops(route_data),
+                "stops": stops,
                 "clock": clock.strftime("%H:%M:%S"),
-                "paused": control["paused"],
-                "factor": control["factor"],
                 "traffic": dict(self._traffic_status),
-                "congestion_zone": {
-                    "polygon": ZONA_CONGESTION,
-                    "min_slowdown": REDUCCION_MIN,
-                    "max_slowdown": REDUCCION_MAX,
-                },
+                "traffic_zones": self._serialize_zones(bus_states, stops),
             }
 
-    def _route_with_traffic(self, route_data):
+    def _serialize_zones(self, bus_states, stops):
+        def buses_in(polygon):
+            return sum(
+                punto_en_zona((bus["latitude"], bus["longitude"]), polygon)
+                for bus in bus_states
+            )
+
+        if self._traffic_cells is None:
+            return {
+                "mode": "simulada",
+                "updated_at": None,
+                "measured": 0,
+                "min_slowdown": REDUCCION_MIN,
+                "max_slowdown": REDUCCION_MAX,
+                "zones": [{
+                    "id": "simulada",
+                    "polygon": ZONA_CONGESTION,
+                    "label": "Zona de congestión simulada",
+                    "severity": "simulada",
+                    "current_kmh": None,
+                    "free_kmh": None,
+                    "slowdown": None,
+                    "closed": False,
+                    "buses": buses_in(ZONA_CONGESTION),
+                }],
+            }
+
+        zones = []
+        for cell in self._traffic_cells["cells"]:
+            nearest = min(
+                stops,
+                key=lambda stop: distancia_coordenadas_m(
+                    cell["centro"], (stop["latitud"], stop["longitud"])
+                ),
+                default=None,
+            )
+            zones.append({
+                "id": cell["id"],
+                "polygon": cell["poligono"],
+                "center": cell["centro"],
+                "label": f"Cerca de {nearest['nombre']}" if nearest else cell["id"],
+                # Los hexágonos fluidos también se envían para pintarlos en el mapa.
+                "severity": cell["severidad"] or "fluido",
+                "current_kmh": cell["current_kmh"],
+                "free_kmh": cell["free_kmh"],
+                "slowdown": round(cell["reduccion"], 2),
+                "closed": cell["closed"],
+                "buses": buses_in(cell["poligono"]),
+            })
+        zones.sort(key=lambda zone: zone["slowdown"], reverse=True)
+        return {
+            "mode": "tomtom",
+            "updated_at": self._traffic_cells["updated_at"],
+            "measured": len(self._traffic_cells["cells"]),
+            "zones": zones,
+        }
+
+    def _route_with_traffic(self, route_data, free_flow=False):
+        """
+        Aplica el trazado y los tiempos de TomTom. Con free_flow se usan los
+        tiempos sin tráfico tal cual, porque el tráfico real lo ponen los
+        hexágonos; si no, los tiempos con tráfico se aceleran con el factor.
+        """
         traffic_route = self._traffic_routes.get(route_data["codigo"])
         if traffic_route is None:
             return route_data
-        traffic_route = {
-            **traffic_route,
-            **{
-                key: [seconds / self.TRAFFIC_SPEED_FACTOR for seconds in traffic_route[key]]
-                for key in ("duraciones_tramos_ida_s", "duraciones_tramos_regreso_s")
-            },
-        }
-        return {**route_data, **traffic_route}
+        durations = {}
+        for direction in ("ida", "regreso"):
+            seconds = [
+                value / self.TRAFFIC_SPEED_FACTOR
+                for value in traffic_route[f"duraciones_tramos_{direction}_s"]
+            ]
+            if free_flow:
+                seconds = traffic_route.get(f"duraciones_libres_{direction}_s") or seconds
+            durations[f"duraciones_tramos_{direction}_s"] = seconds
+        return {**route_data, **traffic_route, **durations}
 
     @staticmethod
     def _serialize_route(route):
@@ -262,6 +405,24 @@ class TransitService:
                 raise LookupError("La ruta solicitada no existe.")
             self._traffic_routes.pop(code, None)
 
+    def remove_route_bus(self, code):
+        with self._lock:
+            route = next(
+                (route for route in self.database.list_routes() if route["codigo"] == code),
+                None,
+            )
+            if route is None:
+                raise LookupError("La ruta solicitada no existe.")
+            if not self.database.remove_route_bus(code):
+                raise ValueError(
+                    "La ruta debe conservar al menos un bus; elimina la ruta completa."
+                )
+
     def create_vehicle(self, vehicle):
         with self._lock:
             self.database.create_vehicle(vehicle)
+
+    def delete_vehicle(self, plate):
+        with self._lock:
+            if not self.database.delete_vehicle(plate):
+                raise LookupError("El vehículo solicitado no existe.")

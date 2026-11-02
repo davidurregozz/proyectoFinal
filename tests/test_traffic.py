@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from backend.seed_data import RUTAS
 from backend.simulation import Ruta
-from backend.traffic import TomTomTrafficRouter
+from backend.traffic import TomTomTrafficFlow, TomTomTrafficRouter
 
 
 class MockResponse:
@@ -33,7 +33,10 @@ class TrafficTests(unittest.TestCase):
                             {"latitude": 1.01, "longitude": 2.01},
                             {"latitude": 1.02, "longitude": 2.02},
                         ],
-                        "summary": {"travelTimeInSeconds": 321},
+                        "summary": {
+                            "travelTimeInSeconds": 321,
+                            "noTrafficTravelTimeInSeconds": 200,
+                        },
                     },
                     {
                         "points": [
@@ -46,7 +49,7 @@ class TrafficTests(unittest.TestCase):
             }],
         }
         with patch("backend.traffic.urlopen", return_value=MockResponse(payload)) as open_url:
-            geometry, durations = TomTomTrafficRouter("test-key")._calculate(
+            geometry, durations, free = TomTomTrafficRouter("test-key")._calculate(
                 [(1.0, 2.0), (1.02, 2.02), (1.03, 2.03)]
             )
 
@@ -57,6 +60,20 @@ class TrafficTests(unittest.TestCase):
         self.assertEqual(geometry[0], (1.0, 2.0))
         self.assertEqual(geometry[-1], (1.03, 2.03))
         self.assertEqual(durations, [321.0, 456.0])
+        # Sin dato de flujo libre se usa la duración con tráfico.
+        self.assertEqual(free, [200.0, 456.0])
+
+    def test_flow_returns_current_and_free_speed_for_point(self):
+        payload = {"flowSegmentData": {
+            "currentSpeed": 18, "freeFlowSpeed": 45, "roadClosure": False, "confidence": 0.9,
+        }}
+        with patch("backend.traffic.urlopen", return_value=MockResponse(payload)) as open_url:
+            speed = TomTomTrafficFlow("test-key").speed((6.25, -75.57))
+
+        self.assertIn("point=6.250000%2C-75.570000", open_url.call_args.args[0].full_url)
+        self.assertEqual(speed["current_kmh"], 18.0)
+        self.assertEqual(speed["free_kmh"], 45.0)
+        self.assertFalse(speed["closed"])
 
     def test_traffic_durations_change_route_cycle_time(self):
         route_data = dict(RUTAS[0])

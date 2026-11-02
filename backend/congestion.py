@@ -1,4 +1,4 @@
-"""Zona de congestión vehicular donde los buses reducen su velocidad."""
+"""Zonas de congestión vehicular donde los buses reducen su velocidad."""
 
 import random
 
@@ -54,12 +54,32 @@ def _cortes_con_bordes(inicio, fin, poligono):
     return sorted(cortes)
 
 
-def dividir_segmento(inicio, fin, poligono=ZONA_CONGESTION):
+def _caja(poligono):
+    lats = [lat for lat, _ in poligono]
+    lons = [lon for _, lon in poligono]
+    return min(lats), max(lats), min(lons), max(lons)
+
+
+def dividir_segmento_zonas(inicio, fin, poligonos):
     """
-    Parte el segmento donde entra o sale de la zona.
-    Devuelve [(punto_inicio, punto_fin, en_zona), ...] en orden de recorrido.
+    Parte el segmento donde entra o sale de cualquiera de las zonas (que no se
+    solapan). Devuelve [(punto_inicio, punto_fin, indice_zona o None), ...].
     """
-    fracciones = [0.0, *_cortes_con_bordes(inicio, fin, poligono), 1.0]
+    lat_min, lat_max = sorted((inicio[0], fin[0]))
+    lon_min, lon_max = sorted((inicio[1], fin[1]))
+    cercanos = []
+    for indice, poligono in enumerate(poligonos):
+        p_lat_min, p_lat_max, p_lon_min, p_lon_max = _caja(poligono)
+        if (p_lat_min <= lat_max and lat_min <= p_lat_max
+                and p_lon_min <= lon_max and lon_min <= p_lon_max):
+            cercanos.append((indice, poligono))
+    if not cercanos:
+        return [(inicio, fin, None)]
+
+    fracciones = sorted({
+        0.0, 1.0,
+        *(t for _, poligono in cercanos for t in _cortes_con_bordes(inicio, fin, poligono)),
+    })
     puntos = [
         (
             inicio[0] + (fin[0] - inicio[0]) * t,
@@ -70,9 +90,23 @@ def dividir_segmento(inicio, fin, poligono=ZONA_CONGESTION):
     piezas = []
     for a, b in zip(puntos, puntos[1:]):
         medio = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
-        en_zona = punto_en_zona(medio, poligono)
-        if piezas and piezas[-1][2] == en_zona:
-            piezas[-1] = (piezas[-1][0], b, en_zona)
+        zona = next(
+            (indice for indice, poligono in cercanos if punto_en_zona(medio, poligono)),
+            None,
+        )
+        if piezas and piezas[-1][2] == zona:
+            piezas[-1] = (piezas[-1][0], b, zona)
         else:
-            piezas.append((a, b, en_zona))
+            piezas.append((a, b, zona))
     return piezas
+
+
+def dividir_segmento(inicio, fin, poligono=ZONA_CONGESTION):
+    """
+    Parte el segmento donde entra o sale de la zona.
+    Devuelve [(punto_inicio, punto_fin, en_zona), ...] en orden de recorrido.
+    """
+    return [
+        (a, b, zona is not None)
+        for a, b, zona in dividir_segmento_zonas(inicio, fin, [poligono])
+    ]

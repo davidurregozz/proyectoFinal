@@ -40,6 +40,14 @@ Completa en `.env` las claves que tengas (`TOMTOM_API_KEY`,
 `docker compose up -d`. Sin claves, el mapa usa Esri World Topo y la
 optimización con tráfico queda desactivada.
 
+Con `TOMTOM_API_KEY`, cada 10 minutos el backend cubre los recorridos con
+hexágonos de 600 m y mide en cada uno la velocidad real de la vía (TomTom
+Traffic Flow). Los hexágonos que van por debajo del 80 % de su velocidad libre
+se dibujan en el mapa y los buses frenan dentro de ellos. Se ajusta con
+`TOMTOM_REFRESCO_S`, `TRAFICO_HEX_RADIO_M` y `TRAFICO_HEX_MAX`; cada
+actualización consume unas 2 consultas por ruta más 1 por hexágono (la cuota
+gratuita es de 2.500 al día). El reloj del dashboard es la hora real de Colombia.
+
 ## Comandos habituales
 
 | Para qué                              | Comando                                          |

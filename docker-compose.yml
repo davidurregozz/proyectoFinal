@@ -11,6 +11,10 @@ services:
       TOMTOM_API_KEY: ${TOMTOM_API_KEY:-}
       # Buses run this many times faster than TomTom live traffic (1.6 = +60 %).
       SIMULADOR_FACTOR_VELOCIDAD: ${SIMULADOR_FACTOR_VELOCIDAD:-1.6}
+      # Traffic hexagons: refresh period, hexagon radius and how many to measure.
+      TOMTOM_REFRESCO_S: ${TOMTOM_REFRESCO_S:-600}
+      TRAFICO_HEX_RADIO_M: ${TRAFICO_HEX_RADIO_M:-600}
+      TRAFICO_HEX_MAX: ${TRAFICO_HEX_MAX:-30}
     volumes:
       - simulador-data:/app/data
     restart: unless-stopped

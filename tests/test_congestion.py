@@ -44,7 +44,7 @@ class CongestionTests(unittest.TestCase):
         ruta = Ruta(ruta_que_cruza_la_zona())
         bus = Bus(ruta, 1, 0)
         piezas = ruta._piezas_tramos[0]
-        metros_zona = sum(largo for _, _, largo, en_zona in piezas if en_zona)
+        metros_zona = sum(largo for _, _, largo, zona in piezas if zona is not None)
 
         recorrido_base = ruta.ciclo_s - 2 * ESPERA_EN_PARADA_S
         recorrido_bus = ruta.ciclo_con_congestion(bus.reduccion) - 2 * ESPERA_EN_PARADA_S

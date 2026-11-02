@@ -79,7 +79,7 @@ RUN sed -i 's/\r$//' /usr/local/bin/dashboard-web \
 USER app
 
 ENV DISPLAY=:99 \
-    SCREEN_RESOLUTION=1280x800x24 \
+    SCREEN_RESOLUTION=1440x900x24 \
     NOVNC_PORT=6080
 
 EXPOSE 6080

@@ -3,7 +3,7 @@
 import math
 from bisect import bisect_right
 
-from backend.congestion import dividir_segmento, reduccion_para
+from backend.congestion import ZONA_CONGESTION, dividir_segmento_zonas, reduccion_para
 from backend.seed_data import ESPERA_EN_PARADA_S
 
 
@@ -31,7 +31,16 @@ class Ruta:
     bus o cuánto le falta para una parada es solo consultar esa tabla.
     """
 
-    def __init__(self, datos):
+    def __init__(self, datos, zonas=None):
+        """
+        'zonas' es una lista de {"poligono": [(lat, lon), ...], "reduccion": r}.
+        Con reduccion None cada bus usa su propia reducción aleatoria (zona
+        simulada); con un número todos los buses frenan igual (tráfico real).
+        """
+        self.zonas = (
+            zonas if zonas is not None
+            else [{"poligono": ZONA_CONGESTION, "reduccion": None}]
+        )
         self.nombre = datos["nombre"]
         self.codigo = datos.get("codigo", self.nombre.split()[0])
         self.municipio = datos.get("municipio", "")
@@ -146,7 +155,8 @@ class Ruta:
             orden = list(range(n)) + list(range(n - 2, -1, -1))    # ida y vuelta
 
         # Para cada salida de parada: (indice_parada, sentido), las piezas del
-        # tramo siguiente partidas por la zona de congestión y su duración base.
+        # tramo siguiente partidas por las zonas de congestión y su duración base.
+        poligonos = [zona["poligono"] for zona in self.zonas]
         self._salidas = []
         self._piezas_tramos = []
         self._duraciones_base = []
@@ -160,9 +170,9 @@ class Ruta:
             tramo = self._tramo_entre(idx, orden[k + 1])
             self._salidas.append((idx, sentido))
             self._piezas_tramos.append([
-                (inicio, fin, distancia_coordenadas_m(inicio, fin), en_zona)
+                (inicio, fin, distancia_coordenadas_m(inicio, fin), zona)
                 for a, b in zip(tramo, tramo[1:])
-                for inicio, fin, en_zona in dividir_segmento(a, b)
+                for inicio, fin, zona in dividir_segmento_zonas(a, b, poligonos)
             ])
             self._duraciones_base.append(self._duracion_tramo(
                 idx, orden[k + 1], self._distancia_tramo(tramo) / velocidad_ms
@@ -212,12 +222,17 @@ class Ruta:
 
     def _horario(self, reduccion):
         """
-        Horario del ciclo cuando la velocidad dentro de la zona de congestión
-        se reduce en 'reduccion' (0.5 = 50 % más lento).
+        Horario del ciclo cuando la velocidad dentro de las zonas simuladas
+        se reduce en 'reduccion' (0.5 = 50 % más lento); las zonas de tráfico
+        real usan su propia reducción.
         Devuelve (horario, ciclo_s, llegadas, tiempos_piezas_por_tramo).
         """
-        if reduccion in self._horarios:
-            return self._horarios[reduccion]
+        reducciones = tuple(
+            reduccion if zona["reduccion"] is None else zona["reduccion"]
+            for zona in self.zonas
+        )
+        if reducciones in self._horarios:
+            return self._horarios[reducciones]
         horario = []
         tiempos_tramos = []
         t = 0.0
@@ -230,15 +245,15 @@ class Ruta:
             if distancia:
                 segundos_por_m = duracion_base / distancia
                 tiempos = [
-                    largo * segundos_por_m / ((1 - reduccion) if en_zona else 1)
-                    for _, _, largo, en_zona in piezas
+                    largo * segundos_por_m / (1 if zona is None else 1 - reducciones[zona])
+                    for _, _, largo, zona in piezas
                 ]
             else:
                 tiempos = [0.0] * len(piezas)
             tiempos_tramos.append(tiempos)
             t += sum(tiempos) if distancia else duracion_base
         resultado = (horario, t, [h[0] for h in horario], tiempos_tramos)
-        self._horarios[reduccion] = resultado
+        self._horarios[reducciones] = resultado
         return resultado
 
     def ciclo_con_congestion(self, reduccion):

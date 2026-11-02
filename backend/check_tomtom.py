@@ -1,4 +1,4 @@
-"""Check TOMTOM_API_KEY against TomTom Routing: python -m backend.check_tomtom"""
+"""Check TOMTOM_API_KEY against TomTom Routing and Traffic Flow: python -m backend.check_tomtom"""
 
 import json
 import os
@@ -9,7 +9,7 @@ from urllib.request import urlopen
 
 from backend.env import ENV_PATH, load_env_file
 from backend.seed_data import RUTAS
-from backend.traffic import TomTomTrafficRouter, TrafficRoutingError
+from backend.traffic import TomTomTrafficFlow, TomTomTrafficRouter, TrafficRoutingError
 
 
 CAUSAS = {
@@ -55,6 +55,16 @@ def main():
         print(f"[OK] Ruta '{RUTAS[0]['nombre']}' optimizada con tráfico en vivo.")
     except TrafficRoutingError as error:
         print(f"[X] La prueba simple funcionó pero la ruta del simulador falló: {error}")
+        return 1
+
+    try:
+        speed = TomTomTrafficFlow(key).speed((6.251800, -75.563600))
+        print(
+            "[OK] TomTom Traffic Flow (hexágonos de tráfico): vía en el centro a "
+            f"{speed['current_kmh']:.0f} km/h de {speed['free_kmh']:.0f} km/h libres."
+        )
+    except TrafficRoutingError as error:
+        print(f"[X] Traffic Flow falló ({error}); los hexágonos de tráfico no se mostrarán.")
         return 1
     return 0
 
