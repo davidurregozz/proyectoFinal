@@ -6,7 +6,8 @@ from datetime import datetime
 from pathlib import Path
 
 from backend.database import Database
-from backend.seed_data import RUTAS
+from backend.hexagons import celdas_sobre_trazados
+from backend.seed_data import RUTAS, emoji_vehiculo
 from backend.service import ZONA_HORARIA, TransitService, clasificar_trafico
 from backend.traffic import TrafficRoutingError
 
@@ -85,6 +86,62 @@ class BackendTests(unittest.TestCase):
         self.assertTrue(any(
             route["ciclo_s"] > free_cycle[route["codigo"]] for route in snapshot["routes"]
         ))
+
+    def test_every_hexagon_crossed_by_the_routes_is_measured(self):
+        service = TransitService(self.database)
+        routes = self.database.list_routes()
+        trazados = [r["coordenadas"] for r in routes] + [
+            r["coordenadas_regreso"] for r in routes if r["coordenadas_regreso"]]
+        expected = len(celdas_sobre_trazados(trazados, service.HEX_RADIUS_M, 10_000))
+
+        class FakeFlow:
+            def speed(self, point):
+                return {"current_kmh": 40.0, "free_kmh": 45.0, "closed": False, "confidence": 1}
+
+        service._traffic_flow = FakeFlow()
+        calls = service._refresh_traffic_cells()
+
+        self.assertGreater(expected, 30)                     # el antiguo límite dejaba huecos
+        self.assertEqual(service.snapshot()["traffic_zones"]["measured"], expected)
+        self.assertEqual(calls, expected)
+
+    def test_failed_hexagon_keeps_previous_measurement_or_shows_no_data(self):
+        service = TransitService(self.database)
+
+        class FakeFlow:
+            fail_points = set()
+
+            def speed(self, point):
+                if point in self.fail_points:
+                    raise TrafficRoutingError("sin respuesta")
+                return {"current_kmh": 10.0, "free_kmh": 45.0, "closed": False, "confidence": 1}
+
+        flow = FakeFlow()
+        service._traffic_flow = flow
+        service._traffic_stop.set()                          # sin esperas entre reintentos
+        service._refresh_traffic_cells()
+        first, second = service._traffic_cells["cells"][:2]
+
+        flow.fail_points = {first["consulta"]}
+        calls = service._refresh_traffic_cells()
+        cells = {cell["id"]: cell for cell in service._traffic_cells["cells"]}
+        self.assertEqual(cells[first["id"]]["severidad"], "severo")   # medición anterior
+        self.assertEqual(calls, len(cells) + 1)                        # un reintento
+
+        service._traffic_cells["cells"] = [
+            cell for cell in service._traffic_cells["cells"] if cell["id"] != second["id"]]
+        flow.fail_points = {second["consulta"]}
+        service._refresh_traffic_cells()
+        cells = {cell["id"]: cell for cell in service._traffic_cells["cells"]}
+        self.assertEqual(cells[second["id"]]["severidad"], "sin_dato")
+        self.assertNotIn(second["poligono"], [zone["poligono"] for zone in service._zones()])
+
+    def test_refresh_interval_grows_to_fit_the_daily_quota(self):
+        service = TransitService(self.database)
+
+        self.assertEqual(service._refresh_interval(5), service.TRAFFIC_REFRESH_SECONDS)
+        budget = 60 * service.TOMTOM_USAGE_HOURS * 3600 / service.TOMTOM_DAILY_QUOTA
+        self.assertEqual(service._refresh_interval(60), max(service.TRAFFIC_REFRESH_SECONDS, budget))
 
     def test_without_measurements_the_simulated_zone_is_used(self):
         zones = TransitService(self.database).snapshot()["traffic_zones"]
@@ -200,6 +257,31 @@ class BackendTests(unittest.TestCase):
         self.assertNotIn("TEST-002", [v["placa"] for v in snapshot["vehicles"]])
         with self.assertRaises(LookupError):
             service.delete_vehicle("TEST-002")
+
+    def test_buses_carry_the_emoji_of_their_vehicle_type(self):
+        service = TransitService(self.database)
+        service.create_vehicle({
+            "placa": "MOT-01",
+            "tipo": "Moto",
+            "modelo": "Yamaha",
+            "capacidad": 2,
+            "ruta": "R1 Centro - Poblado",
+            "conductor": "Prueba",
+            "estado": "Operativo",
+        })
+
+        buses = {bus["name"]: bus for bus in service.snapshot()["buses"]}
+
+        self.assertEqual(buses["MOT-01"]["vehicle_type"], "Moto")
+        self.assertEqual(buses["MOT-01"]["emoji"], "🏍️")
+        self.assertEqual(buses["R1-1"]["emoji"], "🚌")         # bus propio de la ruta
+
+    def test_hand_written_vehicle_types_are_recognized(self):
+        self.assertEqual(emoji_vehiculo("Taxi"), "🚕")
+        self.assertEqual(emoji_vehiculo("carro particular"), "🚗")
+        self.assertEqual(emoji_vehiculo("Motocicleta"), "🏍️")
+        self.assertEqual(emoji_vehiculo("Microbús"), "🚐")
+        self.assertEqual(emoji_vehiculo("Bus intermunicipal"), "🚌")
 
     def test_remove_route_bus_keeps_at_least_one(self):
         service = TransitService(self.database)

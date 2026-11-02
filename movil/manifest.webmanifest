@@ -1,0 +1,15 @@
+{
+  "name": "Simulador de Rutas · Medellín",
+  "short_name": "Buses MDE",
+  "description": "Buses en tiempo real, próximas llegadas y tráfico por zonas del Valle de Aburrá.",
+  "lang": "es",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b1120",
+  "theme_color": "#0b1120",
+  "icons": [
+    {"src": "icono.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any"}
+  ]
+}

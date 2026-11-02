@@ -8,13 +8,21 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 import webbrowser
 
-from PIL import Image, ImageDraw, ImageTk
+from PIL import Image, ImageDraw, ImageFont, ImageTk
 
 from backend.congestion import dividir_segmento_zonas
-from backend.seed_data import MODELOS_VEHICULO, MUNICIPIOS, TIPOS_VEHICULO
+from backend.seed_data import CAPACIDAD_VEHICULO, MODELOS_VEHICULO, MUNICIPIOS, TIPOS_VEHICULO
 from frontend.api_client import ApiClient, ApiError
 from frontend.map_widget import crear_mapa_con_respaldo, proveedores_mapa
 from frontend.theme import aclarar, aplicar_tema
+
+
+# Fuentes de emoji a color: Windows, Debian/Ubuntu (Docker) y macOS.
+FUENTES_EMOJI = (
+    r"C:\Windows\Fonts\seguiemj.ttf",
+    "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+    "/System/Library/Fonts/Apple Color Emoji.ttc",
+)
 
 
 class RouteView:
@@ -46,6 +54,7 @@ class Simulador(tk.Tk):
         "moderado": ("#fff3a3", "#e0b100", "Tráfico moderado"),
         "alto": ("#ffcc99", "#f08a3c", "Tráfico alto"),
         "severo": ("#ffaaaa", "#e05555", "Tráfico severo"),
+        "sin_dato": ("#e5e7eb", "#9ca3af", "Sin dato"),
         "simulada": ("#FFCC99", "#F4A261", "Zona de congestión simulada"),
     }
 
@@ -114,8 +123,6 @@ class Simulador(tk.Tk):
         self.cmb_mapa.current(0)
         self.cmb_mapa.bind("<<ComboboxSelected>>", self.cambiar_mapa)
         self.cmb_mapa.pack(side="left")
-        ttk.Button(controles, text="+  Nuevo registro", style="Accent.TButton",
-                   command=self.abrir_ventana_registro).pack(side="left", padx=(14, 0))
 
         cuerpo = ttk.Frame(self)
         cuerpo.pack(side="top", fill="both", expand=True)
@@ -470,11 +477,36 @@ class Simulador(tk.Tk):
         )
 
     # ── Ayudas para construir la interfaz ──────────────────────────────
-    def _icono(self, diametro, relleno, borde, banderin=False):
+    def _emoji(self, texto, lado):
+        """Imagen RGBA de un emoji a color, o None si no hay fuente de emoji."""
+        if not hasattr(self, "_fuente_emoji"):
+            self._fuente_emoji = None
+            for ruta in FUENTES_EMOJI:
+                try:
+                    # Noto Color Emoji solo trae el tamaño 109; se dibuja ahí y se reduce.
+                    self._fuente_emoji = ImageFont.truetype(ruta, 109)
+                    break
+                except OSError:
+                    continue
+        if self._fuente_emoji is None:
+            return None
+        lienzo = Image.new("RGBA", (160, 160), (0, 0, 0, 0))
+        # Sin el selector de variación (U+FE0F) Pillow no deja un cuadro vacío.
+        ImageDraw.Draw(lienzo).text((80, 80), texto.replace("\ufe0f", ""),
+                                    font=self._fuente_emoji, embedded_color=True, anchor="mm")
+        caja = lienzo.getbbox()
+        if caja is None:
+            return None
+        lienzo = lienzo.crop(caja)
+        lienzo.thumbnail((lado, lado), Image.LANCZOS)
+        return lienzo
+
+    def _icono(self, diametro, relleno, borde, banderin=False, emoji=None):
         """
         Dibuja un círculo de color para usarlo como marcador en el mapa.
         Con 'banderin' agrega un banderín rojo arriba a la derecha; el lienzo
         crece por igual en todos los lados para que el círculo siga centrado.
+        Con 'emoji' lo dibuja dentro del círculo (tipo de vehículo).
         """
         Image, ImageDraw, ImageTk = self._pil
         k = 4                                   # se dibuja grande y se reduce (suaviza)
@@ -486,6 +518,12 @@ class Simulador(tk.Tk):
             ((margen + 1) * k, (margen + 1) * k,
              (margen + diametro - 1) * k, (margen + diametro - 1) * k),
             fill=relleno, outline=borde, width=3 * k)
+        if emoji:
+            imagen = self._emoji(emoji, int((diametro - 8) * k))
+            if imagen is not None:
+                centro = (margen + diametro / 2) * k
+                img.alpha_composite(imagen, (round(centro - imagen.width / 2),
+                                             round(centro - imagen.height / 2)))
         if banderin:
             asta = (lado - 10) * k
             dibujo.line((asta, 1 * k, asta, (margen + 7) * k),
@@ -497,10 +535,18 @@ class Simulador(tk.Tk):
         return icono
 
     def _icono_bus(self, bus):
-        """Icono del bus; lleva banderín rojo si va a menos de 15 km/h."""
-        clave = (bus["color"], bus["speed_kmh"] < self.VELOCIDAD_LENTA_KMH)
+        """
+        Icono del vehículo: su emoji (bus, carro, moto...) en un círculo blanco con
+        el borde del color de su ruta; lleva banderín rojo si va a menos de 15 km/h.
+        """
+        lento = bus["speed_kmh"] < self.VELOCIDAD_LENTA_KMH
+        clave = (bus["color"], bus.get("emoji"), lento)
         if clave not in self._iconos_bus:
-            self._iconos_bus[clave] = self._icono(20, clave[0], "white", banderin=clave[1])
+            if bus.get("emoji") and self._emoji(bus["emoji"], 8) is not None:
+                icono = self._icono(28, "white", bus["color"], banderin=lento, emoji=bus["emoji"])
+            else:                                   # sin fuente de emoji: círculo de color
+                icono = self._icono(20, bus["color"], "white", banderin=lento)
+            self._iconos_bus[clave] = icono
         return self._iconos_bus[clave]
 
     def _icono_logo(self, lado=36):
@@ -547,12 +593,12 @@ class Simulador(tk.Tk):
         ttk.Label(fila, text=f"Bus a menos de {self.VELOCIDAD_LENTA_KMH} km/h",
                   style="Header.TLabel").pack(side="left")
 
-    def _actualizar_leyenda(self, modo):
+    def _actualizar_leyenda(self, modo, sin_dato=False):
         for widget in self.leyenda_zonas.winfo_children():
             widget.destroy()
         niveles = (
             ("fluido", "moderado", "alto", "severo") if modo == "tomtom" else ("simulada",)
-        )
+        ) + (("sin_dato",) if sin_dato else ())
         for nivel in niveles:
             relleno, _, texto = self.NIVELES_TRAFICO[nivel]
             fila = ttk.Frame(self.leyenda_zonas, style="Header.TFrame")
@@ -627,16 +673,17 @@ class Simulador(tk.Tk):
             poligono = self.mapa.set_polygon(
                 [tuple(punto) for punto in zona["polygon"]],
                 fill_color=relleno, outline_color=borde,
-                border_width=1 if zona["severity"] == "fluido" else 2,
+                border_width=1 if zona["severity"] in ("fluido", "sin_dato") else 2,
                 name=zona["label"], data=zona["id"], command=self._clic_zona,
             )
             # Trama más densa que la de tkintermapview para resaltar las zonas con tráfico.
-            if zona["severity"] != "fluido":
+            if zona["severity"] not in ("fluido", "sin_dato"):
                 self.mapa.canvas.itemconfig(poligono.canvas_polygon, stipple="gray50")
             self.poligonos_trafico.append(poligono)
         self.mapa.manage_z_order()              # rutas y buses por encima de las zonas
         self._zonas_dibujadas = firma
-        self._actualizar_leyenda(datos["mode"])
+        self._actualizar_leyenda(
+            datos["mode"], any(zona["severity"] == "sin_dato" for zona in zonas))
 
     def _zonas_filtradas(self):
         """Hexágonos que cruzan alguna ruta del municipio elegido."""
@@ -666,14 +713,14 @@ class Simulador(tk.Tk):
         datos = self.snapshot["traffic_zones"]
         zonas = self._zonas_filtradas()
         if datos["mode"] == "tomtom":
-            lentas = sum(zona["severity"] != "fluido" for zona in zonas)
+            lentas = sum(zona["severity"] not in ("fluido", "sin_dato") for zona in zonas)
             donde = (
                 "los recorridos" if self.municipio == self.TODOS_MUNICIPIOS
                 else f"las rutas de {self.municipio}"
             )
             self.lbl_resumen_trafico.config(text=(
                 f"TomTom midió {len(zonas)} hexágonos sobre {donde} "
-                f"({datos['updated_at']}). "
+                f"({datos['updated_at']}, se actualiza cada {datos['refresh_minutes']} min). "
                 + (f"{lentas} con tráfico lento: ahí los buses frenan según la "
                    "velocidad real de la vía. Toca una fila para ubicarla."
                    if lentas else
@@ -682,8 +729,9 @@ class Simulador(tk.Tk):
             filas = [
                 (zona["id"], zona["severity"], (
                     zona["label"],
-                    "Cerrada" if zona["closed"] else f"{zona['current_kmh']:.0f} km/h",
-                    f"{zona['free_kmh']:.0f} km/h",
+                    "Sin dato" if zona["current_kmh"] is None
+                    else "Cerrada" if zona["closed"] else f"{zona['current_kmh']:.0f} km/h",
+                    "—" if zona["free_kmh"] is None else f"{zona['free_kmh']:.0f} km/h",
                     f"-{zona['slowdown'] * 100:.0f} %",
                     zona["buses"],
                 ))
@@ -822,9 +870,18 @@ class Simulador(tk.Tk):
                 "Operativo",
             ),
         }
+        def sugerir_capacidad(_evento=None):
+            # Solo cambia la capacidad si sigue siendo una sugerida, no una escrita a mano.
+            campo = campos_vehiculo["capacidad"]
+            if campo.get().strip() in {"", *map(str, CAPACIDAD_VEHICULO.values())}:
+                campo.delete(0, "end")
+                campo.insert(0, str(CAPACIDAD_VEHICULO.get(campos_vehiculo["tipo"].get(), 40)))
+
+        campos_vehiculo["tipo"].bind("<<ComboboxSelected>>", sugerir_capacidad)
         ttk.Label(
             tab_vehiculo,
-            text="Los vehículos en estado Operativo también se agregarán como buses al mapa.",
+            text="Los vehículos en estado Operativo aparecerán en el mapa con el emoji "
+                 "de su tipo: bus, microbús, carro, taxi o moto.",
             wraplength=560,
             style="CardMuted.TLabel",
         ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(12, 4))

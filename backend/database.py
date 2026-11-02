@@ -244,10 +244,10 @@ class Database:
     def list_bus_vehicles(self):
         with self.connect() as connection:
             return [
-                {"placa": row["plate"], "ruta": row["route_name"]}
+                {"placa": row["plate"], "ruta": row["route_name"], "tipo": row["kind"]}
                 for row in connection.execute(
                     """
-                    SELECT vehicles.plate, routes.name AS route_name
+                    SELECT vehicles.plate, vehicles.kind, routes.name AS route_name
                     FROM vehicles JOIN routes ON routes.code = vehicles.route_code
                     WHERE vehicles.active_bus = 1
                     """

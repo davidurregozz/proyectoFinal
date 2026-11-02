@@ -40,13 +40,53 @@ Completa en `.env` las claves que tengas (`TOMTOM_API_KEY`,
 `docker compose up -d`. Sin claves, el mapa usa Esri World Topo y la
 optimización con tráfico queda desactivada.
 
-Con `TOMTOM_API_KEY`, cada 10 minutos el backend cubre los recorridos con
-hexágonos de 600 m y mide en cada uno la velocidad real de la vía (TomTom
-Traffic Flow). Los hexágonos que van por debajo del 80 % de su velocidad libre
-se dibujan en el mapa y los buses frenan dentro de ellos. Se ajusta con
-`TOMTOM_REFRESCO_S`, `TRAFICO_HEX_RADIO_M` y `TRAFICO_HEX_MAX`; cada
-actualización consume unas 2 consultas por ruta más 1 por hexágono (la cuota
-gratuita es de 2.500 al día). El reloj del dashboard es la hora real de Colombia.
+Con `TOMTOM_API_KEY`, el backend cubre los recorridos con hexágonos de 600 m
+y mide en **todos** la velocidad real de la vía (TomTom Traffic Flow). Los que
+van por debajo del 80 % de su velocidad libre frenan a los buses. Si un
+hexágono no responde se reintenta, se usa su medición anterior o se dibuja en
+gris como "Sin dato", así ninguna ruta queda con huecos.
+
+Cada actualización consume unas 2 consultas por ruta más 1 por hexágono (con
+las 5 rutas, unas 59). La espera entre actualizaciones crece sola para que
+`TOMTOM_HORAS_USO` horas de uso (10 por defecto) quepan en la cuota gratuita
+de 2.500 consultas al día: hoy son unos 14 minutos. Se ajusta con
+`TOMTOM_REFRESCO_S` (espera mínima), `TOMTOM_CUOTA_DIARIA`, `TOMTOM_HORAS_USO`
+y `TRAFICO_HEX_RADIO_M`. El reloj del dashboard es la hora real de Colombia.
+
+## App para celular
+
+El backend sirve una app web para celular en `/movil/`: mapa con los buses en
+vivo, hexágonos de tráfico, próximas llegadas, flota y filtro por municipio.
+En el computador se abre en http://localhost:8000/movil/.
+
+Para usarla desde el celular, conectado a la misma red Wi-Fi que el PC:
+
+**Sin Docker (lo más simple).** En `.env` pon `SIMULADOR_HOST=0.0.0.0` y ejecuta
+`py start.py`. La consola muestra la dirección, por ejemplo
+`http://192.168.1.20:8000/movil/`. Windows pedirá permitir Python en el
+firewall: acepta solo para redes privadas.
+
+**Con Docker (corre dentro de WSL).** En `.env` pon `SIMULADOR_IP_PUBLICA=0.0.0.0`
+y una contraseña en `VNC_PASSWORD` (el dashboard del puerto 6080 permite crear y
+borrar rutas; VNC usa solo 8 caracteres) y ejecuta `docker compose up -d`. WSL tiene su propia red, así que además hay
+que redirigir el puerto desde Windows, permitirlo en el firewall y tener la
+Wi-Fi marcada como red Privada (en una red Pública Windows bloquea todo lo
+entrante). El script lo hace; ejecútalo en PowerShell **como administrador**
+desde la carpeta del proyecto:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File docker\abrir-en-red.ps1
+```
+
+Al final muestra las direcciones para los otros dispositivos, por ejemplo
+`http://192.168.1.4:8080/movil/` (app móvil) y `http://192.168.1.4:6081`
+(dashboard de escritorio, pide la contraseña de `VNC_PASSWORD`). Repítelo después de reiniciar el PC, porque
+la IP interna de WSL cambia. Para deshacerlo: el mismo comando con `-Cerrar`.
+
+En el navegador del celular, "Agregar a la pantalla de inicio" la deja como un
+ícono más. La app solo consulta datos; aun así, con la red abierta cualquiera
+en ese Wi-Fi puede usar la API (también crear o borrar rutas), así que úsala en
+redes de confianza.
 
 ## Comandos habituales
 
@@ -55,6 +95,7 @@ gratuita es de 2.500 al día). El reloj del dashboard es la hora real de Colombi
 | Ver el estado de los servicios        | `docker compose ps`                              |
 | Ver los logs                          | `docker compose logs -f`                         |
 | Comprobar la API                      | `curl http://localhost:8000/api/health`          |
+| Abrir la app para celular             | http://localhost:8000/movil/                     |
 | Ejecutar las pruebas                  | `docker compose --profile test run --rm tests`   |
 | Reconstruir tras cambiar código       | `docker compose up -d --build`                   |
 | Detener                               | `docker compose down`                            |

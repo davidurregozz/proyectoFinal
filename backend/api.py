@@ -2,10 +2,13 @@
 
 from contextlib import asynccontextmanager
 import math
+from pathlib import Path
 import sqlite3
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from backend.service import TransitService
@@ -176,3 +179,14 @@ def delete_vehicle(plate: str, service: ServiceDependency):
         raise HTTPException(status_code=404, detail=str(error)) from error
     return {"message": "Vehículo eliminado."}
 
+
+# Mobile web app: same API, opened from the phone's browser at /movil/.
+MOBILE_DIR = Path(__file__).resolve().parents[1] / "movil"
+
+
+@app.get("/", include_in_schema=False)
+def mobile_home():
+    return RedirectResponse("/movil/")
+
+
+app.mount("/movil", StaticFiles(directory=MOBILE_DIR, html=True), name="movil")

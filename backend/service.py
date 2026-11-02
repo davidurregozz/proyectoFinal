@@ -14,6 +14,7 @@ from backend.congestion import (
 )
 from backend.database import Database
 from backend.hexagons import celdas_sobre_trazados
+from backend.seed_data import emoji_vehiculo
 from backend.simulation import Bus, Ruta, distancia_coordenadas_m, texto_espera
 from backend.traffic import (
     TrafficRoutingError,
@@ -50,10 +51,14 @@ class TransitService:
     # Routing (about 2 calls per route) plus one Traffic Flow call per hexagon each
     # refresh; 600 s keeps a normal working day inside TomTom's free daily quota.
     TRAFFIC_REFRESH_SECONDS = int(os.environ.get("TOMTOM_REFRESCO_S", "600"))
+    # The real wait grows with the number of calls so a day of use fits the free quota.
+    TOMTOM_DAILY_QUOTA = int(os.environ.get("TOMTOM_CUOTA_DIARIA", "2500"))
+    TOMTOM_USAGE_HOURS = float(os.environ.get("TOMTOM_HORAS_USO", "10"))
     # TomTom durations are divided by this so buses run 60 % faster than live traffic.
     TRAFFIC_SPEED_FACTOR = float(os.environ.get("SIMULADOR_FACTOR_VELOCIDAD", "1.6"))
     HEX_RADIUS_M = float(os.environ.get("TRAFICO_HEX_RADIO_M", "600"))
-    HEX_MAX = int(os.environ.get("TRAFICO_HEX_MAX", "30"))
+    # Safety cap only: every hexagon the routes cross is measured, so none is left out.
+    HEX_MAX = int(os.environ.get("TRAFICO_HEX_MAX", "150"))
 
     def __init__(self, database=None):
         self.database = database or Database()
@@ -63,6 +68,7 @@ class TransitService:
         self._traffic_flow = create_traffic_flow()
         self._traffic_routes = {}
         self._traffic_cells = None          # None: sin medición, se usa la zona simulada
+        self._traffic_interval_s = self.TRAFFIC_REFRESH_SECONDS
         self._route_cache = {}
         self._traffic_stop = threading.Event()
         self._traffic_refresh_requested = threading.Event()
@@ -95,14 +101,20 @@ class TransitService:
 
     def _traffic_refresh_loop(self):
         while not self._traffic_stop.is_set():
-            self._refresh_traffic_routes()
-            self._refresh_traffic_cells()
-            self._traffic_refresh_requested.wait(self.TRAFFIC_REFRESH_SECONDS)
+            calls = self._refresh_traffic_routes() + self._refresh_traffic_cells()
+            self._traffic_interval_s = self._refresh_interval(calls)
+            self._traffic_refresh_requested.wait(self._traffic_interval_s)
             self._traffic_refresh_requested.clear()
 
+    def _refresh_interval(self, calls):
+        """Seconds to wait so TOMTOM_USAGE_HOURS of use stay inside the daily quota."""
+        budget = calls * self.TOMTOM_USAGE_HOURS * 3600 / self.TOMTOM_DAILY_QUOTA
+        return max(self.TRAFFIC_REFRESH_SECONDS, budget)
+
     def _refresh_traffic_routes(self):
+        """Recalcula las rutas con TomTom; devuelve cuántas consultas hizo."""
         if self._traffic_router is None:
-            return
+            return 0
         with self._lock:
             self._traffic_status = {
                 **self._traffic_status,
@@ -147,38 +159,64 @@ class TransitService:
                     ),
                     "updated_at": previous_update,
                 }
+        # Una consulta por sentido: las circulares solo tienen ida.
+        return sum(1 if route["circular"] else 2 for route in routes)
 
     def _refresh_traffic_cells(self):
-        """Mide con TomTom Traffic Flow la velocidad real en cada hexágono de los recorridos."""
+        """
+        Mide con TomTom Traffic Flow la velocidad real en cada hexágono de los
+        recorridos; devuelve cuántas consultas hizo. Si un hexágono no responde
+        se reintenta, luego se usa su medición anterior y, si no hay, queda
+        "sin_dato": así ningún tramo de ruta se queda sin su hexágono.
+        """
         if self._traffic_flow is None:
-            return
+            return 0
         with self._lock:
             routes = [self._route_with_traffic(route) for route in self.database.list_routes()]
         trazados = [route["coordenadas"] for route in routes] + [
             route["coordenadas_regreso"] for route in routes if route["coordenadas_regreso"]
         ]
+        previous = {
+            cell["id"]: cell for cell in (self._traffic_cells or {}).get("cells", [])
+            if cell["severidad"] != "sin_dato"
+        }
         cells = []
-        failures = 0
+        calls = measured = failures = 0
         for cell in celdas_sobre_trazados(trazados, self.HEX_RADIUS_M, self.HEX_MAX):
-            try:
-                speed = self._traffic_flow.speed(cell["consulta"])
-            except TrafficRoutingError as error:
-                failures += 1
-                if not cells and failures >= 3:     # clave sin Traffic API o sin conexión
-                    logging.warning("TomTom Traffic Flow no disponible: %s", error)
+            speed = None
+            for attempt in range(2):
+                if attempt:
+                    self._traffic_stop.wait(1)      # un respiro antes de reintentar
+                calls += 1
+                try:
+                    speed = self._traffic_flow.speed(cell["consulta"])
                     break
+                except TrafficRoutingError as error:
+                    last_error = error
+            if speed is None:
+                failures += 1
+                if not measured and failures >= 3:  # clave sin Traffic API o sin conexión
+                    logging.warning("TomTom Traffic Flow no disponible: %s", last_error)
+                    break
+                old = previous.get(cell["id"])
+                cells.append({**old, **cell} if old else {
+                    **cell, "current_kmh": None, "free_kmh": None, "closed": False,
+                    "confidence": None, "reduccion": 0.0, "severidad": "sin_dato",
+                })
                 continue
+            measured += 1
             reduccion, severidad = clasificar_trafico(
                 speed["current_kmh"], speed["free_kmh"], speed["closed"]
             )
             cells.append({**cell, **speed, "reduccion": reduccion, "severidad": severidad})
 
         with self._lock:
-            if cells:                               # si todo falla se conserva la medición anterior
+            if measured:                            # si todo falla se conserva la medición anterior
                 self._traffic_cells = {
                     "cells": cells,
                     "updated_at": datetime.now(ZONA_HORARIA).strftime("%H:%M"),
                 }
+        return calls
 
     def _zones(self):
         """Zonas lentas medidas por TomTom, o None para usar la zona simulada."""
@@ -186,7 +224,8 @@ class TransitService:
             return None
         return [
             {"poligono": cell["poligono"], "reduccion": cell["reduccion"]}
-            for cell in self._traffic_cells["cells"] if cell["severidad"]
+            for cell in self._traffic_cells["cells"]
+            if cell["severidad"] in ("moderado", "alto", "severo")
         ]
 
     def _build_route(self, route_data, zones):
@@ -225,21 +264,27 @@ class TransitService:
                     bus = Bus(route, number, (number - 1) * route.ciclo_s / route.n_buses)
                     buses.append(bus)
 
+            # Los buses propios de cada ruta son buses urbanos; los registrados usan su tipo.
+            vehicle_types = {}
             for vehicle in self.database.list_bus_vehicles():
                 route = routes_by_name[vehicle["ruta"]]
                 bus = Bus(route, len([b for b in buses if b.ruta is route]) + 1, 0)
                 bus.nombre = vehicle["placa"]
                 buses.append(bus)
+                vehicle_types[bus.nombre] = vehicle["tipo"]
 
             bus_states = []
             arrivals = []
             for bus in buses:
                 lat, lon, next_stop, remaining = bus.estado(elapsed)
                 speed_kmh = round(bus.velocidad_actual_kmh(elapsed), 1)
+                vehicle_type = vehicle_types.get(bus.nombre, "Bus urbano")
                 bus_states.append({
                     "name": bus.nombre,
                     "route_code": bus.ruta.codigo,
                     "color": bus.ruta.color,
+                    "vehicle_type": vehicle_type,
+                    "emoji": emoji_vehiculo(vehicle_type),
                     "latitude": lat,
                     "longitude": lon,
                     "next_stop": next_stop,
@@ -330,6 +375,7 @@ class TransitService:
             "mode": "tomtom",
             "updated_at": self._traffic_cells["updated_at"],
             "measured": len(self._traffic_cells["cells"]),
+            "refresh_minutes": round(self._traffic_interval_s / 60),
             "zones": zones,
         }
 

@@ -321,7 +321,46 @@ TIPOS_VEHICULO = [
     "Microbús",
     "Minibús",
     "BRT",
+    "Carro",
+    "Taxi",
+    "Moto",
 ]
+
+# Emoji que identifica cada tipo en el mapa (escritorio y app móvil).
+EMOJI_VEHICULO = {
+    "Bus urbano": "🚌",
+    "Bus articulado": "🚌",
+    "Microbús": "🚐",
+    "Minibús": "🚐",
+    "BRT": "🚍",
+    "Carro": "🚗",
+    "Taxi": "🚕",
+    "Moto": "🏍️",
+}
+
+# Capacidad sugerida en el formulario al elegir el tipo.
+CAPACIDAD_VEHICULO = {
+    "Bus urbano": 40,
+    "Bus articulado": 160,
+    "Microbús": 19,
+    "Minibús": 25,
+    "BRT": 120,
+    "Carro": 4,
+    "Taxi": 4,
+    "Moto": 2,
+}
+
+
+def emoji_vehiculo(tipo):
+    """Emoji del tipo; los tipos escritos a mano se reconocen por palabras clave."""
+    if tipo in EMOJI_VEHICULO:
+        return EMOJI_VEHICULO[tipo]
+    texto = tipo.casefold()
+    for clave, emoji in (("moto", "🏍️"), ("taxi", "🚕"), ("carro", "🚗"), ("auto", "🚗"),
+                         ("micro", "🚐"), ("mini", "🚐"), ("van", "🚐")):
+        if clave in texto:
+            return emoji
+    return "🚌"
 
 MODELOS_VEHICULO = [
     "Mercedes-Benz",

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b1120">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Buses MDE">
+  <title>Buses Medellín</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icono.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icono.svg">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+  <header class="barra">
+    <img src="icono.svg" class="logo" alt="" width="34" height="34">
+    <div class="titulos">
+      <h1>Simulador de Rutas</h1>
+      <span id="estado-trafico" class="pill pill-alerta">Conectando…</span>
+    </div>
+    <div class="reloj">
+      <strong id="reloj">--:--:--</strong>
+      <small>Hora real</small>
+    </div>
+  </header>
+
+  <div class="contenido">
+    <div class="zona-mapa">
+      <div id="mapa" aria-label="Mapa de rutas y buses"></div>
+      <div class="filtro">
+        <label for="municipio">Municipio</label>
+        <select id="municipio"></select>
+      </div>
+      <button id="centrar" class="boton-flotante" type="button" aria-label="Ver todas las rutas">⤢</button>
+      <div class="leyenda" id="leyenda"></div>
+    </div>
+
+    <section class="hoja" id="hoja">
+      <button class="asa" id="asa" type="button" aria-label="Mostrar u ocultar el panel"></button>
+      <div class="kpis">
+        <div class="kpi"><strong id="kpi-activos">–</strong><span>Buses</span></div>
+        <div class="kpi"><strong id="kpi-media">–</strong><span>Vel. media</span></div>
+        <div class="kpi"><strong id="kpi-lentos">–</strong><span>Bajo 15 km/h</span></div>
+      </div>
+      <nav class="pestanas" role="tablist">
+        <button type="button" role="tab" data-panel="llegadas" class="activa">Llegadas</button>
+        <button type="button" role="tab" data-panel="flota">Flota</button>
+        <button type="button" role="tab" data-panel="trafico">Tráfico</button>
+      </nav>
+      <div class="panel" id="panel-llegadas">
+        <select id="parada" aria-label="Parada"></select>
+        <ul class="lista" id="lista-llegadas"></ul>
+      </div>
+      <div class="panel" id="panel-flota" hidden>
+        <ul class="lista" id="lista-flota"></ul>
+      </div>
+      <div class="panel" id="panel-trafico" hidden>
+        <p class="nota" id="resumen-trafico"></p>
+        <ul class="lista" id="lista-trafico"></ul>
+      </div>
+    </section>
+  </div>
+
+  <div class="aviso" id="aviso" hidden></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="app.js"></script>
+</body>
+</html>

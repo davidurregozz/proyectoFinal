@@ -5,16 +5,20 @@ services:
       target: backend
     image: simulador-buses-backend
     ports:
-      - "127.0.0.1:8000:8000"
+      # Set SIMULADOR_IP_PUBLICA=0.0.0.0 in .env to open the API and /movil/ to the local network.
+      - "${SIMULADOR_IP_PUBLICA:-127.0.0.1}:8000:8000"
     environment:
       # Optional; taken from the host environment or .env, never stored in the image.
       TOMTOM_API_KEY: ${TOMTOM_API_KEY:-}
       # Buses run this many times faster than TomTom live traffic (1.6 = +60 %).
       SIMULADOR_FACTOR_VELOCIDAD: ${SIMULADOR_FACTOR_VELOCIDAD:-1.6}
-      # Traffic hexagons: refresh period, hexagon radius and how many to measure.
+      # Traffic hexagons: every hexagon on the routes is measured (TRAFICO_HEX_MAX is
+      # only a safety cap) and the wait grows to keep TOMTOM_HORAS_USO in the quota.
       TOMTOM_REFRESCO_S: ${TOMTOM_REFRESCO_S:-600}
+      TOMTOM_CUOTA_DIARIA: ${TOMTOM_CUOTA_DIARIA:-2500}
+      TOMTOM_HORAS_USO: ${TOMTOM_HORAS_USO:-10}
       TRAFICO_HEX_RADIO_M: ${TRAFICO_HEX_RADIO_M:-600}
-      TRAFICO_HEX_MAX: ${TRAFICO_HEX_MAX:-30}
+      TRAFICO_HEX_MAX: ${TRAFICO_HEX_MAX:-150}
     volumes:
       - simulador-data:/app/data
     restart: unless-stopped
@@ -26,9 +30,11 @@ services:
       target: dashboard-web
     image: simulador-buses-frontend
     ports:
-      - "127.0.0.1:6080:6080"
+      # Same switch as the backend; set VNC_PASSWORD too, since 6080 controls the dashboard.
+      - "${SIMULADOR_IP_PUBLICA:-127.0.0.1}:6080:6080"
     environment:
       SIMULADOR_API_URL: http://backend:8000
+      VNC_PASSWORD: ${VNC_PASSWORD:-}
       MAPA_PROVEEDOR: ${MAPA_PROVEEDOR:-}
       STADIA_MAPS_API_KEY: ${STADIA_MAPS_API_KEY:-}
       CARTO_API_KEY: ${CARTO_API_KEY:-}

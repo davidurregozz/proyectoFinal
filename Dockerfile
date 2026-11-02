@@ -12,6 +12,7 @@ RUN pip install -r requirements.txt
 
 COPY backend ./backend
 COPY frontend ./frontend
+COPY movil ./movil
 COPY start.py simulador_buses.py ./
 
 RUN useradd --create-home --uid 1000 app \
@@ -45,12 +46,13 @@ CMD ["python", "-m", "backend.run"]
 
 
 # Tkinter dashboard drawn on the host X server given in DISPLAY.
-# The slim image strips the Tk runtime, so it is installed here.
+# The slim image strips the Tk runtime, so it is installed here; the emoji font
+# draws each vehicle type (bus, car, motorbike) on the map markers.
 FROM base AS dashboard
 
 USER root
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends tk fonts-dejavu-core \
+    && apt-get install -y --no-install-recommends tk fonts-dejavu-core fonts-noto-color-emoji \
     && rm -rf /var/lib/apt/lists/*
 USER app
 

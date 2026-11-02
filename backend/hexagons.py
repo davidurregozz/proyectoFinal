@@ -62,7 +62,7 @@ def celdas_sobre_trazados(trazados, radio_m, maximo):
     al centro de cada uno (ahí se consulta el tráfico, sobre la vía del bus).
     Si hay más de 'maximo', se conservan los que más recorrido contienen.
     """
-    paso_m = radio_m / 3
+    paso_m = radio_m / 6                      # fino, para no perder hexágonos que la ruta solo roza
     muestras = {}
     for trazado in trazados:
         for a, b in zip(trazado, trazado[1:]):
