@@ -52,7 +52,7 @@ def main():
 
     try:
         TomTomTrafficRouter(key).optimize(RUTAS[0])
-        print(f"[OK] Ruta '{RUTAS[0]['nombre']}' optimizada con tráfico en vivo.")
+        print(f"[OK] Ruta '{RUTAS[0]['nombre']}' trazada sobre las vías reales.")
     except TrafficRoutingError as error:
         print(f"[X] La prueba simple funcionó pero la ruta del simulador falló: {error}")
         return 1

@@ -212,7 +212,7 @@ function contenidoZona(id) {
   } else {
     caja.append(
       elemento("div", "", `Nivel: ${NIVELES[zona.severity][2]}`),
-      elemento("div", "", zona.closed ? "Vía cerrada" : `Actual ${Math.round(zona.current_kmh)} km/h · libre ${Math.round(zona.free_kmh)} km/h`),
+      elemento("div", "", zona.closed ? "Congestión: tráfico detenido" : `Actual ${Math.round(zona.current_kmh)} km/h · libre ${Math.round(zona.free_kmh)} km/h`),
       elemento("div", "", `Los buses frenan ${Math.round(zona.slowdown * 100)} %`),
     );
   }
@@ -364,7 +364,7 @@ function actualizarTrafico() {
     const marca = elemento("span", "insignia", nivel);
     marca.style.background = relleno;
     const velocidad = zona.severity === "sin_dato" ? "Sin dato"
-      : zona.current_kmh === null ? "—" : zona.closed ? "Cerrada" : `${Math.round(zona.current_kmh)} km/h`;
+      : zona.current_kmh === null ? "—" : zona.closed ? "Congestión" : `${Math.round(zona.current_kmh)} km/h`;
     const frena = zona.slowdown === null ? "50-70 %" : `-${Math.round(zona.slowdown * 100)} %`;
     boton.append(
       marca,
@@ -386,6 +386,11 @@ function actualizarKpis() {
     ? `${Math.round(enMarcha.reduce((a, b) => a + b, 0) / enMarcha.length)} km/h` : "0 km/h";
   $("kpi-lentos").textContent = lentos;
   $("kpi-lentos").style.color = lentos ? "var(--peligro)" : "var(--exito)";
+  const visitas = estado.datos.visits;
+  if (visitas) {
+    $("kpi-ingresos").textContent = visitas.total.toLocaleString("es-CO");
+    $("kpi-ingresos-hoy").textContent = `Ingresos · hoy ${visitas.today.toLocaleString("es-CO")}`;
+  }
 }
 
 function actualizarSelectores() {
@@ -510,4 +515,16 @@ document.addEventListener("visibilitychange", () => {
 });
 window.addEventListener("resize", () => mapa.invalidateSize());
 
+// Un ingreso por sesión: recargar la página no lo vuelve a contar.
+function registrarIngreso() {
+  try {
+    if (sessionStorage.getItem("ingreso-registrado")) return;
+    sessionStorage.setItem("ingreso-registrado", "1");
+  } catch (error) {
+    // Sin almacenamiento (modo privado estricto): se cuenta igual, una vez por carga.
+  }
+  fetch("/api/visitas", { method: "POST" }).catch(() => {});
+}
+
+registrarIngreso();
 consultar();

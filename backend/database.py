@@ -63,6 +63,10 @@ class Database:
                 CREATE TABLE IF NOT EXISTS applied_seed_routes (
                     seed_code TEXT PRIMARY KEY
                 );
+                CREATE TABLE IF NOT EXISTS app_visits (
+                    day TEXT PRIMARY KEY,
+                    count INTEGER NOT NULL CHECK (count >= 0)
+                );
                 """
             )
             has_routes = connection.execute(
@@ -76,7 +80,7 @@ class Database:
                 self._insert_route(connection, route)
             connection.executemany(
                 "INSERT INTO applied_seed_routes (seed_code) VALUES (?)",
-                [(self._seed_code(route),) for route in RUTAS],
+                [(key,) for route in RUTAS for key in self._seed_keys(route)],
             )
             route_codes = {
                 row["name"]: row["code"]
@@ -104,11 +108,18 @@ class Database:
     def _seed_code(route):
         return route.get("codigo", route["nombre"].split()[0])
 
+    @classmethod
+    def _seed_keys(cls, route):
+        """Marks of a seed route: its code and, if it was redrawn, "code@vN"."""
+        code = cls._seed_code(route)
+        return [code] + ([f"{code}@v{route['version']}"] if route.get("version") else [])
+
     def _migrate_seed_routes(self, connection):
         """
         Pone al día una base existente: agrega una sola vez las rutas de la
-        semilla que no tenía (si el usuario la borra después, no vuelve) y
-        completa el municipio que las rutas originales guardaban vacío.
+        semilla que no tenía (si el usuario la borra después, no vuelve),
+        completa el municipio que las rutas originales guardaban vacío y
+        aplica una sola vez los trazados nuevos de las rutas redibujadas.
         """
         applied = {
             row["seed_code"]
@@ -127,6 +138,27 @@ class Database:
                     "UPDATE routes SET municipality = ? "
                     "WHERE code = ? AND name = ? AND municipality = ''",
                     (route["municipio"], seed_code, route["nombre"]),
+                )
+            redrawn = f"{seed_code}@v{route['version']}" if route.get("version") else None
+            if redrawn and redrawn not in applied:
+                # Mismas paradas y trazado que una base nueva; solo si la ruta sigue siendo la original.
+                connection.execute(
+                    """
+                    UPDATE routes SET circular = ?, stops_json = ?, coordinates_json = ?,
+                        return_coordinates_json = ?
+                    WHERE code = ? AND name = ?
+                    """,
+                    (
+                        int(route["circular"]),
+                        json.dumps(route["paradas"], ensure_ascii=False),
+                        json.dumps(route.get("coordenadas", [])),
+                        json.dumps(route.get("coordenadas_regreso", [])),
+                        seed_code,
+                        route["nombre"],
+                    ),
+                )
+                connection.execute(
+                    "INSERT INTO applied_seed_routes (seed_code) VALUES (?)", (redrawn,)
                 )
             if seed_code in applied:
                 continue
@@ -148,8 +180,9 @@ class Database:
                         "nombre": f"R{number} {destination}",
                     }
                 self._insert_route(connection, route)
-            connection.execute(
-                "INSERT INTO applied_seed_routes (seed_code) VALUES (?)", (seed_code,)
+            connection.executemany(
+                "INSERT OR IGNORE INTO applied_seed_routes (seed_code) VALUES (?)",
+                [(key,) for key in self._seed_keys(route)],
             )
 
     @staticmethod
@@ -283,3 +316,25 @@ class Database:
         with self.connect() as connection:
             cursor = connection.execute("DELETE FROM vehicles WHERE plate = ?", (plate,))
             return cursor.rowcount > 0
+
+    def register_visit(self, day):
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO app_visits (day, count) VALUES (?, 1)
+                ON CONFLICT(day) DO UPDATE SET count = count + 1
+                """,
+                (day,),
+            )
+
+    def visit_counts(self, day):
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT COALESCE(SUM(count), 0) AS total,
+                       COALESCE(SUM(CASE WHEN day = ? THEN count END), 0) AS today
+                FROM app_visits
+                """,
+                (day,),
+            ).fetchone()
+            return {"total": row["total"], "today": row["today"]}

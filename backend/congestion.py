@@ -99,14 +99,3 @@ def dividir_segmento_zonas(inicio, fin, poligonos):
         else:
             piezas.append((a, b, zona))
     return piezas
-
-
-def dividir_segmento(inicio, fin, poligono=ZONA_CONGESTION):
-    """
-    Parte el segmento donde entra o sale de la zona.
-    Devuelve [(punto_inicio, punto_fin, en_zona), ...] en orden de recorrido.
-    """
-    return [
-        (a, b, zona is not None)
-        for a, b, zona in dividir_segmento_zonas(inicio, fin, [poligono])
-    ]

@@ -7,7 +7,7 @@ import sqlite3
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -105,7 +105,34 @@ async def lifespan(app):
         service.stop_traffic_refresh()
 
 
-app = FastAPI(title="Simulador de rutas de buses", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Visualización de rutas de buses", version="1.0.0", lifespan=lifespan)
+
+READ_METHODS = {"GET", "HEAD", "OPTIONS"}
+# Counting a visit to the mobile app changes no route or vehicle.
+INTERNET_WRITE_ALLOWED = {"/api/visitas"}
+
+
+def is_internet_write(method, path, headers):
+    """
+    True for a change (create, edit, delete) arriving from the internet. Cloudflare
+    adds CF-Connecting-IP to everything it forwards and a client cannot remove it;
+    the dashboard talks to the backend over Docker's own network, without it.
+    """
+    return (
+        method.upper() not in READ_METHODS
+        and path not in INTERNET_WRITE_ALLOWED
+        and "cf-connecting-ip" in headers
+    )
+
+
+@app.middleware("http")
+async def read_only_from_internet(request: Request, call_next):
+    if is_internet_write(request.method, request.url.path, request.headers):
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content={"detail": "Desde internet la aplicación es de solo lectura."},
+        )
+    return await call_next(request)
 
 
 def get_service(request: Request) -> TransitService:
@@ -118,6 +145,12 @@ ServiceDependency = Annotated[TransitService, Depends(get_service)]
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+@app.post("/api/visitas")
+def register_visit(service: ServiceDependency):
+    """Ingreso a la app móvil; la app lo envía una vez por sesión."""
+    return service.register_visit()
 
 
 @app.get("/api/dashboard")

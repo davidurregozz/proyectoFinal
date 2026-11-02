@@ -5,7 +5,8 @@ import unittest
 from backend.congestion import (
     REDUCCION_MAX,
     REDUCCION_MIN,
-    dividir_segmento,
+    ZONA_CONGESTION,
+    dividir_segmento_zonas,
     punto_en_zona,
     reduccion_para,
 )
@@ -29,8 +30,8 @@ class CongestionTests(unittest.TestCase):
         self.assertFalse(punto_en_zona((6.24, -75.60)))
 
     def test_segment_is_split_at_zone_borders(self):
-        piezas = dividir_segmento((6.24, -75.60), (6.24, -75.55))
-        self.assertEqual([en_zona for _, _, en_zona in piezas], [False, True, False])
+        piezas = dividir_segmento_zonas((6.24, -75.60), (6.24, -75.55), [ZONA_CONGESTION])
+        self.assertEqual([zona for _, _, zona in piezas], [None, 0, None])
         self.assertEqual(piezas[0][0], (6.24, -75.60))
         self.assertEqual(piezas[-1][1], (6.24, -75.55))
 

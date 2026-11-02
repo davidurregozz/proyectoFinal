@@ -43,7 +43,14 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 }
 .logo { flex: none; border-radius: 9px; }
 .titulos { flex: 1; min-width: 0; }
-.titulos h1 { margin: 0; font-size: 16px; font-weight: 700; white-space: nowrap; }
+.titulos h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .reloj { text-align: right; }
 .reloj strong { display: block; color: var(--acento); font-size: 20px; font-variant-numeric: tabular-nums; }
 .reloj small { color: var(--tenue); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
@@ -157,9 +164,9 @@ select:focus-visible, button:focus-visible { outline: 2px solid var(--acento); o
   background: var(--borde);
 }
 
-.kpis { flex: none; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.kpi { padding: 8px 10px; background: var(--tarjeta); border-radius: 10px; }
-.kpi strong { display: block; font-size: 19px; font-variant-numeric: tabular-nums; }
+.kpis { flex: none; display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.kpi { min-width: 0; padding: 8px; background: var(--tarjeta); border-radius: 10px; }
+.kpi strong { display: block; font-size: 17px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .kpi span { color: var(--tenue); font-size: 11px; }
 
 .pestanas { flex: none; display: flex; gap: 4px; margin: 10px 0 8px; }

@@ -65,6 +65,30 @@ services:
       backend:
         condition: service_healthy
 
+  # Internet access through Cloudflare quick tunnels: free, HTTPS, no account,
+  # domain or router ports. The https://...trycloudflare.com address changes on
+  # every start; show it with: sh docker/enlaces-internet.sh
+  # Mobile app (read-only from the internet): docker compose --profile internet up -d
+  tunel-app:
+    image: cloudflare/cloudflared:2026.9.3
+    profiles: ["internet"]
+    command: tunnel --no-autoupdate --url http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Admin dashboard, only when needed: add --profile internet-panel
+  tunel-panel:
+    image: cloudflare/cloudflared:2026.9.3
+    profiles: ["internet-panel"]
+    # It can edit routes: publish it only with VNC_PASSWORD set in .env.
+    command: tunnel --no-autoupdate --url http://frontend:6080
+    depends_on:
+      frontend:
+        condition: service_healthy
+    restart: unless-stopped
+
   # Run with: docker compose --profile test run --rm tests
   tests:
     build:

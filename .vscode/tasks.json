@@ -6,7 +6,7 @@
 			"type": "shell",
 			"command": "py",
 			"args": [
-				".\\simulador_buses.py"
+				"start.py"
 			],
 			"isBackground": true
 		},

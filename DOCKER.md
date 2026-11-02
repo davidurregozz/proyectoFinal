@@ -40,14 +40,20 @@ Completa en `.env` las claves que tengas (`TOMTOM_API_KEY`,
 `docker compose up -d`. Sin claves, el mapa usa Esri World Topo y la
 optimización con tráfico queda desactivada.
 
-Con `TOMTOM_API_KEY`, el backend cubre los recorridos con hexágonos de 600 m
+Con `TOMTOM_API_KEY`, cada ruta se traza una sola vez sobre las vías reales,
+como una línea de bus de verdad: no cambia de recorrido con el tráfico. Si una
+parada obliga a dar un rodeo (por ejemplo, queda en la calzada contraria de una
+autopista), su paradero en ese sentido se ubica sobre la vía por donde pasa el
+bus, a máximo 300 m.
+
+Además, el backend cubre los recorridos con hexágonos de 600 m
 y mide en **todos** la velocidad real de la vía (TomTom Traffic Flow). Los que
 van por debajo del 80 % de su velocidad libre frenan a los buses. Si un
 hexágono no responde se reintenta, se usa su medición anterior o se dibuja en
 gris como "Sin dato", así ninguna ruta queda con huecos.
 
-Cada actualización consume unas 2 consultas por ruta más 1 por hexágono (con
-las 5 rutas, unas 59). La espera entre actualizaciones crece sola para que
+Cada actualización consume 1 consulta por hexágono (unas 50); las rutas solo
+se consultan la primera vez. La espera entre actualizaciones crece sola para que
 `TOMTOM_HORAS_USO` horas de uso (10 por defecto) quepan en la cuota gratuita
 de 2.500 consultas al día: hoy son unos 14 minutos. Se ajusta con
 `TOMTOM_REFRESCO_S` (espera mínima), `TOMTOM_CUOTA_DIARIA`, `TOMTOM_HORAS_USO`
@@ -87,6 +93,38 @@ En el navegador del celular, "Agregar a la pantalla de inicio" la deja como un
 ícono más. La app solo consulta datos; aun así, con la red abierta cualquiera
 en ese Wi-Fi puede usar la API (también crear o borrar rutas), así que úsala en
 redes de confianza.
+
+## Acceso desde internet
+
+Para ver la aplicación desde cualquier computador o celular, sin abrir puertos
+del router, se usan túneles rápidos de Cloudflare: gratis, con HTTPS y sin
+cuenta ni dominio. La dirección (`https://...trycloudflare.com`) **cambia cada
+vez que se encienden**.
+
+```bash
+docker compose --profile internet up -d --build      # app para celular
+sh docker/enlaces-internet.sh                        # muestra la dirección
+```
+
+Desde internet la app es **de solo lectura**: se ven el mapa, las llegadas y el
+tráfico, pero no se pueden crear ni borrar rutas o vehículos.
+
+El panel de administración se publica aparte y solo cuando haga falta. Antes,
+pon una contraseña en `VNC_PASSWORD` dentro de `.env`:
+
+```bash
+docker compose --profile internet --profile internet-panel up -d
+sh docker/enlaces-internet.sh
+```
+
+Para dejar de publicar (el resto sigue funcionando en el equipo):
+
+```bash
+docker compose --profile internet --profile internet-panel stop tunel-app tunel-panel
+```
+
+Para una dirección fija (por ejemplo `buses.midominio.com`) hace falta un
+dominio propio y un túnel con nombre de Cloudflare.
 
 ## Comandos habituales
 

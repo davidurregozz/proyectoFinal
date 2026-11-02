@@ -13,7 +13,7 @@ RUN pip install -r requirements.txt
 COPY backend ./backend
 COPY frontend ./frontend
 COPY movil ./movil
-COPY start.py simulador_buses.py ./
+COPY start.py ./
 
 RUN useradd --create-home --uid 1000 app \
     && mkdir -p /app/data \

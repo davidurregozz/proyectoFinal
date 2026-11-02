@@ -1,5 +1,6 @@
 """Focused tests for SQLite persistence and server-side simulation."""
 
+import json
 import tempfile
 import unittest
 from datetime import datetime
@@ -9,7 +10,8 @@ from backend.database import Database
 from backend.hexagons import celdas_sobre_trazados
 from backend.seed_data import RUTAS, emoji_vehiculo
 from backend.service import ZONA_HORARIA, TransitService, clasificar_trafico
-from backend.traffic import TrafficRoutingError
+from backend.simulation import Ruta
+from backend.traffic import TrafficRoutingError, _is_detour
 
 
 class BackendTests(unittest.TestCase):
@@ -143,6 +145,19 @@ class BackendTests(unittest.TestCase):
         budget = 60 * service.TOMTOM_USAGE_HOURS * 3600 / service.TOMTOM_DAILY_QUOTA
         self.assertEqual(service._refresh_interval(60), max(service.TRAFFIC_REFRESH_SECONDS, budget))
 
+    def test_mobile_app_visits_are_counted_per_day_and_in_total(self):
+        self.database.register_visit("2026-11-01")
+        self.database.register_visit("2026-11-01")
+        self.database.register_visit("2026-11-02")
+
+        self.assertEqual(self.database.visit_counts("2026-11-02"), {"total": 3, "today": 1})
+        self.assertEqual(self.database.visit_counts("2026-11-03"), {"total": 3, "today": 0})
+
+        service = TransitService(self.database)
+        counts = service.register_visit()
+        self.assertEqual(counts["total"], 4)
+        self.assertEqual(service.snapshot()["visits"], counts)
+
     def test_without_measurements_the_simulated_zone_is_used(self):
         zones = TransitService(self.database).snapshot()["traffic_zones"]
 
@@ -166,11 +181,12 @@ class BackendTests(unittest.TestCase):
     def test_snapshot_uses_cached_live_traffic_route(self):
         service = TransitService(self.database)
         route = self.database.list_routes()[0]
+        legs = len(route["paradas"]) if route["circular"] else len(route["paradas"]) - 1
         traffic_route = {
             "coordenadas": route["coordenadas"],
             "coordenadas_regreso": route["coordenadas_regreso"],
-            "duraciones_tramos_ida_s": [120.0] * 6,
-            "duraciones_tramos_regreso_s": [150.0] * 6,
+            "duraciones_tramos_ida_s": [120.0] * legs,
+            "duraciones_tramos_regreso_s": [] if route["circular"] else [150.0] * legs,
         }
         service._traffic_routes[route["codigo"]] = traffic_route
 
@@ -183,7 +199,7 @@ class BackendTests(unittest.TestCase):
         self.assertTrue(optimized["traffic_applied"])
         self.assertEqual(
             optimized["duraciones_tramos_ida_s"],
-            [120.0 / TransitService.TRAFFIC_SPEED_FACTOR] * 6,
+            [120.0 / TransitService.TRAFFIC_SPEED_FACTOR] * legs,
         )
 
     def test_refresh_uses_provider_and_keeps_saved_routes_on_failure(self):
@@ -339,6 +355,28 @@ class BackendTests(unittest.TestCase):
 
         self.assertEqual(sorted(stops["Parque del Poblado"]["codigos"]), ["R1", "R5"])
         self.assertIn("Parque de Envigado", stops)
+
+    def test_old_database_receives_the_redrawn_routes_once(self):
+        old_stops = [["Estación vieja", 6.25, -75.56], ["Otra estación", 6.24, -75.57]]
+        with self.database.connect() as connection:
+            connection.execute(
+                "UPDATE routes SET circular = 0, stops_json = ? WHERE code = 'R1'",
+                (json.dumps(old_stops),),
+            )
+            connection.execute("DELETE FROM applied_seed_routes WHERE seed_code = 'R1@v2'")
+
+        self.database.initialize()
+
+        r1 = next(route for route in self.database.list_routes() if route["codigo"] == "R1")
+        self.assertEqual([stop[0] for stop in r1["paradas"]], [stop[0] for stop in RUTAS[0]["paradas"]])
+        self.assertTrue(r1["circular"])
+
+    def test_seed_routes_have_no_detours_between_stops(self):
+        for data in RUTAS:
+            route = Ruta(data)
+            for pieces in route._piezas_tramos:
+                leg = [piece[0] for piece in pieces] + [pieces[-1][1]]
+                self.assertFalse(_is_detour(leg), f"{route.nombre} da un rodeo")
 
     def test_new_route_survives_database_reopen(self):
         route = {

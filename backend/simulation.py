@@ -18,11 +18,6 @@ def distancia_coordenadas_m(p1, p2):
     return 2 * r * math.asin(math.sqrt(a))
 
 
-def distancia_m(p1, p2):
-    """Distancia en metros entre dos paradas (fórmula de Haversine)."""
-    return distancia_coordenadas_m(p1[1:], p2[1:])
-
-
 class Ruta:
     """
     Una ruta se recorre en un CICLO que se repite sin fin.
@@ -60,20 +55,30 @@ class Ruta:
         # Cada parada debe aparecer en orden en el trazado para poder dividirlo
         # en tramos y calcular correctamente la posición y el tiempo del bus.
         coordenadas_paradas = [(lat, lon) for _, lat, lon in self.paradas]
-        coordenadas = datos.get("coordenadas", coordenadas_paradas)
+        # Paradero de cada sentido: el punto de la vía donde el bus se detiene.
+        # Por defecto es la parada misma; las rutas optimizadas lo ubican del lado
+        # de la vía por donde va el bus, como los paraderos reales, para no dar
+        # vueltas buscando el punto exacto de la parada.
+        paraderos_ida = [tuple(p) for p in datos.get("paraderos_ida") or coordenadas_paradas]
+        paraderos_regreso = [
+            tuple(p) for p in datos.get("paraderos_regreso") or coordenadas_paradas
+        ]
+        if len(paraderos_ida) != len(self.paradas) or len(paraderos_regreso) != len(self.paradas):
+            raise ValueError(f"{self.nombre} debe tener un paradero por parada en cada sentido.")
+        coordenadas = datos.get("coordenadas", paraderos_ida)
         if self.circular and "coordenadas" not in datos:
-            coordenadas = [*coordenadas, coordenadas_paradas[0]]
-        self.coordenadas = list(coordenadas)
+            coordenadas = [*coordenadas, paraderos_ida[0]]
+        self.coordenadas = [tuple(p) for p in coordenadas]
         if not self.coordenadas:
             raise ValueError(f"El trazado de {self.nombre} no tiene coordenadas.")
-        if self.coordenadas[0] != coordenadas_paradas[0]:
+        if self.coordenadas[0] != paraderos_ida[0]:
             raise ValueError(
                 f"El trazado de {self.nombre} debe iniciar en la coordenada "
                 "de su primera parada."
             )
         indices_paradas = []
         desde = 0
-        for coordenada in coordenadas_paradas:
+        for coordenada in paraderos_ida:
             try:
                 indice = self.coordenadas.index(coordenada, desde)
             except ValueError as error:
@@ -83,7 +88,7 @@ class Ruta:
                 ) from error
             indices_paradas.append(indice)
             desde = indice + 1
-        coordenada_final = coordenadas_paradas[0] if self.circular else coordenadas_paradas[-1]
+        coordenada_final = paraderos_ida[0] if self.circular else paraderos_ida[-1]
         if self.coordenadas[-1] != coordenada_final:
             raise ValueError(
                 f"El trazado de {self.nombre} debe terminar en la coordenada "
@@ -97,7 +102,7 @@ class Ruta:
         if self.circular:
             self._tramos_ida.append(self.coordenadas[indices_paradas[-1]:])
 
-        self.coordenadas_regreso = list(datos.get("coordenadas_regreso", []))
+        self.coordenadas_regreso = [tuple(p) for p in datos.get("coordenadas_regreso", [])]
         self._tramos_regreso = []
         if self.coordenadas_regreso:
             if self.circular:
@@ -105,7 +110,7 @@ class Ruta:
                     f"La ruta circular {self.nombre} no puede tener un trazado "
                     "de regreso separado."
                 )
-            paradas_regreso = list(reversed(coordenadas_paradas))
+            paradas_regreso = list(reversed(paraderos_regreso))
             if self.coordenadas_regreso[0] != paradas_regreso[0]:
                 raise ValueError(
                     f"El trazado de regreso de {self.nombre} debe iniciar en "
@@ -123,7 +128,7 @@ class Ruta:
                     ) from error
                 indices_regreso.append(indice)
                 desde = indice + 1
-            if self.coordenadas_regreso[-1] != coordenadas_paradas[0]:
+            if self.coordenadas_regreso[-1] != paraderos_regreso[0]:
                 raise ValueError(
                     f"El trazado de regreso de {self.nombre} debe terminar "
                     "en la primera parada."
@@ -158,6 +163,7 @@ class Ruta:
         # tramo siguiente partidas por las zonas de congestión y su duración base.
         poligonos = [zona["poligono"] for zona in self.zonas]
         self._salidas = []
+        self._extremos_tramos = []        # (paradero de salida, paradero de llegada)
         self._piezas_tramos = []
         self._duraciones_base = []
         for k, idx in enumerate(orden[:-1]):
@@ -169,6 +175,7 @@ class Ruta:
                 sentido = self.paradas[0][0]      # viene de regreso
             tramo = self._tramo_entre(idx, orden[k + 1])
             self._salidas.append((idx, sentido))
+            self._extremos_tramos.append((tramo[0], tramo[-1]))
             self._piezas_tramos.append([
                 (inicio, fin, distancia_coordenadas_m(inicio, fin), zona)
                 for a, b in zip(tramo, tramo[1:])
@@ -259,12 +266,6 @@ class Ruta:
     def ciclo_con_congestion(self, reduccion):
         return self._horario(reduccion)[1]
 
-    def trazado(self):
-        """Lista de (lat, lon) para dibujar la línea de la ruta."""
-        if self.coordenadas_regreso:
-            return self.coordenadas + self.coordenadas_regreso[1:]
-        return self.coordenadas
-
     def estado(self, fase, reduccion=0.0):
         """
         Dónde está un bus cuando lleva 'fase' segundos dentro del ciclo.
@@ -275,14 +276,14 @@ class Ruta:
         horario, ciclo_s, llegadas, tiempos_tramos = self._horario(reduccion)
         i = bisect_right(llegadas, fase) - 1
         _, t_salida, idx, _ = horario[i]
-        nombre, lat, lon = self.paradas[idx]
-        if fase <= t_salida:                               # detenido en la parada
-            return lat, lon, nombre, 0.0
+        salida, llegada = self._extremos_tramos[i]
+        if fase <= t_salida:                               # detenido en el paradero
+            return (*salida, self.paradas[idx][0], 0.0)
 
         j = (i + 1) % len(horario)                         # siguiente parada
         t_siguiente = horario[j][0] if j else ciclo_s
         nombre2 = self.paradas[horario[j][2]][0]
-        posicion = self.paradas[horario[j][2]][1:]
+        posicion = llegada
         transcurrido = fase - t_salida
         for (inicio, fin, _, _), tiempo in zip(
             self._piezas_tramos[i], tiempos_tramos[i]
@@ -360,16 +361,6 @@ class Bus:
         return self.ruta.segundos_hasta(
             self.fase(t_sim), nombre_parada, self.reduccion
         )
-
-
-def crear_flota(datos_rutas):
-    """Crea las rutas y reparte sus buses de forma pareja a lo largo del ciclo."""
-    rutas = [Ruta(d) for d in datos_rutas]
-    buses = []
-    for ruta in rutas:
-        for k in range(ruta.n_buses):
-            buses.append(Bus(ruta, k + 1, k * ruta.ciclo_s / ruta.n_buses))
-    return rutas, buses
 
 
 def texto_espera(segundos):

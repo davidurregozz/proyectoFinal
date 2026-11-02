@@ -118,9 +118,10 @@ class TransitService:
         with self._lock:
             self._traffic_status = {
                 **self._traffic_status,
-                "message": "Consultando rutas con el tráfico actual de TomTom...",
+                "message": "Trazando las rutas sobre las vías reales con TomTom...",
             }
 
+        calls_before = getattr(self._traffic_router, "calls", 0)
         updated = {}
         failures = []
         routes = self.database.list_routes()
@@ -144,7 +145,8 @@ class TransitService:
                     "provider": "TomTom",
                     "available": successes == len(routes),
                     "message": (
-                        "Rutas optimizadas con tráfico actual de TomTom."
+                        "Rutas trazadas por las vías reales con TomTom; el tráfico "
+                        "en vivo se mide por hexágonos."
                         if not failures else
                         "Tráfico TomTom parcial; las rutas fallidas conservan su trazado guardado."
                     ),
@@ -159,8 +161,8 @@ class TransitService:
                     ),
                     "updated_at": previous_update,
                 }
-        # Una consulta por sentido: las circulares solo tienen ida.
-        return sum(1 if route["circular"] else 2 for route in routes)
+        # Las rutas se trazan una vez: las siguientes actualizaciones no consultan.
+        return getattr(self._traffic_router, "calls", 0) - calls_before
 
     def _refresh_traffic_cells(self):
         """
@@ -319,6 +321,7 @@ class TransitService:
                 "clock": clock.strftime("%H:%M:%S"),
                 "traffic": dict(self._traffic_status),
                 "traffic_zones": self._serialize_zones(bus_states, stops),
+                "visits": self.database.visit_counts(clock.date().isoformat()),
             }
 
     def _serialize_zones(self, bus_states, stops):
@@ -472,3 +475,9 @@ class TransitService:
         with self._lock:
             if not self.database.delete_vehicle(plate):
                 raise LookupError("El vehículo solicitado no existe.")
+
+    def register_visit(self):
+        """Suma un ingreso a la app móvil en el día de hoy (hora de Colombia)."""
+        today = datetime.now(ZONA_HORARIA).date().isoformat()
+        self.database.register_visit(today)
+        return self.database.visit_counts(today)

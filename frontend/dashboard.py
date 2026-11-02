@@ -33,8 +33,6 @@ class RouteView:
         self.color = data["color"]
         self.velocidad_kmh = data["velocidad_kmh"]
         self.n_buses = data["buses"]
-        self.circular = data["circular"]
-        self.paradas = [tuple(stop) for stop in data["paradas"]]
         self.coordenadas = [tuple(point) for point in data["coordenadas"]]
         self.coordenadas_regreso = [tuple(point) for point in data["coordenadas_regreso"]]
         self.ciclo_s = data["ciclo_s"]
@@ -75,7 +73,7 @@ class Simulador(tk.Tk):
         self.colores, self.fuentes = aplicar_tema(self)
         C, F = self.colores, self.fuentes
 
-        self.title("Simulador de rutas de buses · Medellín")
+        self.title("Visualización de rutas de buses · Medellín")
         self.geometry("1366x800")
         self.minsize(1180, 700)
 
@@ -91,7 +89,7 @@ class Simulador(tk.Tk):
             side="left", padx=(0, 10))
         titulos = ttk.Frame(barra, style="Header.TFrame")
         titulos.pack(side="left")
-        ttk.Label(titulos, text="Simulador de Rutas", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(titulos, text="Visualización de Rutas", style="Title.TLabel").pack(anchor="w")
         ttk.Label(titulos, text="Transporte público · Valle de Aburrá",
                   style="HeaderMuted.TLabel").pack(anchor="w")
 
@@ -154,7 +152,7 @@ class Simulador(tk.Tk):
         self.cmb_parada = ttk.Combobox(llegadas, state="readonly",
                                        values=self._paradas_filtradas())
         self.cmb_parada.set(next(iter(self.paradas)))
-        self.cmb_parada.bind("<<ComboboxSelected>>", lambda e: self.seleccionar_parada())
+        self.cmb_parada.bind("<<ComboboxSelected>>", lambda _evento: self.seleccionar_parada())
         self.cmb_parada.pack(fill="x", pady=(0, 8))
         self.tabla_llegadas = self._crear_tabla(llegadas, 5, [
             ("bus", "BUS", 60), ("hacia", "HACIA", 125),
@@ -216,7 +214,7 @@ class Simulador(tk.Tk):
             ("ruta", "RUTA", 125), ("estado", "ESTADO", 85)], expandir=True)
         self.tabla_vehiculos.bind(
             "<<TreeviewSelect>>",
-            lambda e: self.btn_eliminar_vehiculo.config(
+            lambda _evento: self.btn_eliminar_vehiculo.config(
                 state="normal" if self.tabla_vehiculos.selection() else "disabled"),
         )
         self.actualizar_tabla_vehiculos()
@@ -364,9 +362,6 @@ class Simulador(tk.Tk):
         self._update_selected_marker()
         self.actualizar_tablas()
         self._actualizar_kpis()
-
-    def _render_buses(self):
-        self._render_bus_markers()
 
     def _render_bus_markers(self):
         for _, marker in self.marcadores:
@@ -730,7 +725,7 @@ class Simulador(tk.Tk):
                 (zona["id"], zona["severity"], (
                     zona["label"],
                     "Sin dato" if zona["current_kmh"] is None
-                    else "Cerrada" if zona["closed"] else f"{zona['current_kmh']:.0f} km/h",
+                    else "Congestión" if zona["closed"] else f"{zona['current_kmh']:.0f} km/h",
                     "—" if zona["free_kmh"] is None else f"{zona['free_kmh']:.0f} km/h",
                     f"-{zona['slowdown'] * 100:.0f} %",
                     zona["buses"],
@@ -1232,9 +1227,6 @@ class Simulador(tk.Tk):
             self._refresh_dashboard()
         except ApiError as error:
             messagebox.showerror("No se pudo eliminar la ruta", str(error), parent=self)
-
-    def registrar_vehiculo(self):
-        self.abrir_ventana_registro()
 
     def _filas_flota(self):
         """Toda la flota: los buses del mapa más los vehículos registrados fuera de servicio.
