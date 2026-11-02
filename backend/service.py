@@ -148,6 +148,7 @@ class TransitService:
             arrivals = []
             for bus in buses:
                 lat, lon, next_stop, remaining = bus.estado(self._elapsed)
+                speed_kmh = round(bus.velocidad_actual_kmh(self._elapsed), 1)
                 bus_states.append({
                     "name": bus.nombre,
                     "route_code": bus.ruta.codigo,
@@ -158,7 +159,7 @@ class TransitService:
                     "seconds_remaining": remaining,
                     "remaining_text": texto_espera(remaining),
                     "arrival_time": (clock + timedelta(seconds=remaining)).strftime("%H:%M"),
-                    "speed_kmh": round(bus.velocidad_actual_kmh(self._elapsed), 1),
+                    "speed_kmh": speed_kmh,
                 })
                 if selected_stop:
                     result = bus.segundos_hasta(self._elapsed, selected_stop)
@@ -173,6 +174,7 @@ class TransitService:
                             "arrival_time": (
                                 clock + timedelta(seconds=seconds)
                             ).strftime("%H:%M"),
+                            "speed_kmh": speed_kmh,
                         })
             arrivals.sort(key=lambda arrival: arrival["seconds_remaining"])
             return {

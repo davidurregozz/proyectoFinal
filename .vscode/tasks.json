@@ -9,6 +9,24 @@
 				".\\simulador_buses.py"
 			],
 			"isBackground": true
+		},
+		{
+			"label": "Docker: levantar aplicación",
+			"type": "shell",
+			"command": "docker compose up -d --build",
+			"problemMatcher": []
+		},
+		{
+			"label": "Docker: pruebas",
+			"type": "shell",
+			"command": "docker compose --profile test run --rm tests",
+			"problemMatcher": []
+		},
+		{
+			"label": "Docker: detener",
+			"type": "shell",
+			"command": "docker compose down",
+			"problemMatcher": []
 		}
 	]
 }

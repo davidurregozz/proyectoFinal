@@ -6,7 +6,9 @@ RUTAS = [
     {
         "nombre": "R1 Centro - Poblado",
         "color": "#d62828",
-        "velocidad_kmh": 22,
+        # Crucero entre paradas, típico de vías arterias de Medellín (30-35 km/h);
+        # con paradas y congestión el promedio queda cerca de 17-23 km/h.
+        "velocidad_kmh": 35,
         "buses": 2,
         "circular": False,       # False = va y vuelve por el mismo camino
         "paradas": [
@@ -109,7 +111,7 @@ RUTAS = [
     {
         "nombre": "R2 Centro - San Javier",
         "color": "#1d4ed8",
-        "velocidad_kmh": 20,
+        "velocidad_kmh": 32,
         "buses": 2,
         "circular": False,
         "paradas": [
@@ -186,7 +188,7 @@ RUTAS = [
     {
         "nombre": "R3 Circular Norte",
         "color": "#15803d",
-        "velocidad_kmh": 24,
+        "velocidad_kmh": 30,
         "buses": 2,
         "circular": True,        # True = del último punto regresa al primero
         "paradas": [

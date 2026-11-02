@@ -7,6 +7,8 @@ import time
 from urllib.error import URLError
 from urllib.request import urlopen
 
+from backend.env import load_env_file
+
 
 HEALTH_URL = "http://127.0.0.1:8000/api/health"
 
@@ -31,6 +33,7 @@ def backend_is_ready():
 
 
 def main():
+    load_env_file()                 # the backend subprocess inherits these variables
     server = None
     if not backend_is_ready():
         server = subprocess.Popen(

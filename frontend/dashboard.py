@@ -81,6 +81,17 @@ class Simulador(tk.Tk):
         self.cmb_velocidad.bind("<<ComboboxSelected>>", self.cambiar_velocidad)
         self.cmb_velocidad.pack(side="left", padx=4)
 
+        selector_mapa = ttk.Frame(panel)
+        selector_mapa.pack(fill="x", pady=(0, 8))
+        ttk.Label(selector_mapa, text="Mapa:").pack(side="left")
+        self.cmb_mapa = ttk.Combobox(
+            selector_mapa, state="readonly",
+            values=[proveedor["nombre"] for proveedor in proveedores],
+        )
+        self.cmb_mapa.current(0)
+        self.cmb_mapa.bind("<<ComboboxSelected>>", self.cambiar_mapa)
+        self.cmb_mapa.pack(side="left", fill="x", expand=True, padx=4)
+
         self.rutas_panel = ttk.Frame(panel)
         self.rutas_panel.pack(fill="x")
         ttk.Label(panel, text="Agregar Vehículo",
@@ -114,8 +125,9 @@ class Simulador(tk.Tk):
         ttk.Label(panel, text="Próximas llegadas a la parada",
                   font=("Helvetica", 11, "bold")).pack(anchor="w", pady=(12, 2))
         self.tabla_llegadas = self._crear_tabla(panel, 6, [
-            ("bus", "Bus", 55), ("hacia", "Hacia", 150),
-            ("en", "Llega en", 85), ("hora", "Hora", 55)])
+            ("bus", "Bus", 55), ("hacia", "Hacia", 120),
+            ("en", "Llega en", 70), ("hora", "Hora", 45),
+            ("velocidad", "Velocidad", 70)])
 
         ttk.Label(panel, text="Todos los buses",
                   font=("Helvetica", 11, "bold")).pack(anchor="w", pady=(12, 2))
@@ -540,7 +552,7 @@ class Simulador(tk.Tk):
                 tab_ruta, 1, "Municipio:", MUNICIPIOS, MUNICIPIOS[0]
             ),
             "velocidad": agregar_campo(
-                tab_ruta, 2, "Velocidad (km/h):", valor_inicial="25"
+                tab_ruta, 2, "Velocidad (km/h):", valor_inicial="32"
             ),
             "buses": agregar_campo(
                 tab_ruta, 3, "Cantidad de buses:", valor_inicial="1"
@@ -919,6 +931,7 @@ class Simulador(tk.Tk):
                 "", "end", tags=(arrival["route_code"],), values=(
                     arrival["name"], arrival["direction"],
                     arrival["remaining_text"], arrival["arrival_time"],
+                    f"{arrival['speed_kmh']:.1f} km/h",
                 )
             )
         self.tabla_buses.delete(*self.tabla_buses.get_children())
@@ -932,9 +945,15 @@ class Simulador(tk.Tk):
                 )
             )
 
+    def cambiar_mapa(self, _evento=None):
+        self.mapa.usar_proveedor(self.cmb_mapa.current())
+        self._actualizar_estado_mapa()
+
     def _actualizar_estado_mapa(self):
         if self.mapa.mapa_disponible:
             estado = f"Mapa activo: {self.mapa.nombre_proveedor_activo}"
+            if self.cmb_mapa.get() != self.mapa.nombre_proveedor_activo:
+                self.cmb_mapa.set(self.mapa.nombre_proveedor_activo)   # cambió por respaldo
         else:
             estado = "Mapa sin conexión; probando los proveedores de respaldo..."
 

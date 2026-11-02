@@ -38,6 +38,7 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(len(snapshot["buses"]), 6)
         self.assertTrue(snapshot["stops"])
         self.assertTrue(snapshot["arrivals"])
+        self.assertIn("speed_kmh", snapshot["arrivals"][0])
         self.assertIn("clock", snapshot)
 
     def test_snapshot_uses_cached_live_traffic_route(self):

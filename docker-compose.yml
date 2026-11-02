@@ -7,14 +7,35 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     environment:
-      # Optional; taken from the host environment, never stored in the image.
+      # Optional; taken from the host environment or .env, never stored in the image.
       TOMTOM_API_KEY: ${TOMTOM_API_KEY:-}
     volumes:
       - simulador-data:/app/data
     restart: unless-stopped
 
-  # Start with: docker compose --profile gui up
-  # Requires an X server on the host (VcXsrv/X410 on Windows, XQuartz on macOS).
+  # Tkinter dashboard in the browser: http://localhost:6080
+  frontend:
+    build:
+      context: .
+      target: dashboard-web
+    image: simulador-buses-frontend
+    ports:
+      - "127.0.0.1:6080:6080"
+    environment:
+      SIMULADOR_API_URL: http://backend:8000
+      MAPA_PROVEEDOR: ${MAPA_PROVEEDOR:-}
+      STADIA_MAPS_API_KEY: ${STADIA_MAPS_API_KEY:-}
+      CARTO_API_KEY: ${CARTO_API_KEY:-}
+      ARCGIS_API_KEY: ${ARCGIS_API_KEY:-}
+    shm_size: "256m"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Alternative: native window through a host X server.
+  # Start with: docker compose --profile gui up dashboard
+  # Requires VcXsrv/X410 on Windows (access control disabled) or XQuartz on macOS.
   dashboard:
     build:
       context: .
@@ -24,8 +45,10 @@ services:
     environment:
       SIMULADOR_API_URL: http://backend:8000
       DISPLAY: ${DISPLAY:-host.docker.internal:0.0}
+      MAPA_PROVEEDOR: ${MAPA_PROVEEDOR:-}
       STADIA_MAPS_API_KEY: ${STADIA_MAPS_API_KEY:-}
       CARTO_API_KEY: ${CARTO_API_KEY:-}
+      ARCGIS_API_KEY: ${ARCGIS_API_KEY:-}
     depends_on:
       backend:
         condition: service_healthy
@@ -34,9 +57,9 @@ services:
   tests:
     build:
       context: .
-      target: base
+      target: test
+    image: simulador-buses-tests
     profiles: ["test"]
-    command: ["python", "-m", "unittest", "discover", "tests"]
 
 volumes:
   simulador-data:

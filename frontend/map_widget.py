@@ -11,7 +11,11 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 def proveedores_mapa():
-    """Devuelve los proveedores XYZ y añade sus claves solo desde el entorno."""
+    """Devuelve los proveedores XYZ y añade sus claves solo desde el entorno.
+
+    MAPA_PROVEEDOR (stadia, carto, esri u osm) elige cuál se usa primero;
+    los demás quedan como respaldo.
+    """
     proveedores = []
     clave_stadia = os.environ.get("STADIA_MAPS_API_KEY", "").strip()
     clave_carto = os.environ.get("CARTO_API_KEY", "").strip()
@@ -19,6 +23,7 @@ def proveedores_mapa():
 
     if clave_stadia:
         proveedores.append({
+            "id": "stadia",
             "nombre": "Stadia Maps - Alidade Smooth",
             "url": (
                 "https://tiles.stadiamaps.com/tiles/alidade_smooth/"
@@ -27,6 +32,7 @@ def proveedores_mapa():
         })
     if clave_carto:
         proveedores.append({
+            "id": "carto",
             "nombre": "CARTO - Voyager",
             "url": (
                 "https://basemaps.cartocdn.com/rastertiles/voyager/"
@@ -40,7 +46,18 @@ def proveedores_mapa():
     )
     if clave_esri:
         url_esri += "?" + urlencode({"token": clave_esri})
-    proveedores.append({"nombre": "Esri - World Topographic Map", "url": url_esri})
+    proveedores.append({
+        "id": "esri", "nombre": "Esri - World Topographic Map", "url": url_esri,
+    })
+    # Sin clave; uso moderado según https://operations.osmfoundation.org/policies/tiles/
+    proveedores.append({
+        "id": "osm",
+        "nombre": "OpenStreetMap - Estándar",
+        "url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    })
+
+    preferido = os.environ.get("MAPA_PROVEEDOR", "").strip().lower()
+    proveedores.sort(key=lambda proveedor: proveedor["id"] != preferido)
     return proveedores
 
 
@@ -68,6 +85,13 @@ def crear_mapa_con_respaldo(tkintermapview):
         def nombre_proveedor_activo(self):
             with self._estado_mapa_lock:
                 return self.proveedores[self._proveedor_activo]["nombre"]
+
+        def usar_proveedor(self, indice):
+            """Cambia el mapa base; los demás proveedores siguen de respaldo."""
+            with self._estado_mapa_lock:
+                self._proveedor_activo = indice
+                self._proveedores_fallidos.pop(indice, None)
+            self.set_tile_server(self.proveedores[indice]["url"], max_zoom=19)
 
         def request_image(self, zoom, x, y, db_cursor=None):
             _ = db_cursor

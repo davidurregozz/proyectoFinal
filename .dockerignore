@@ -1,5 +1,6 @@
 .git
 .gitignore
+.gitattributes
 .vscode
 .venv
 venv~
@@ -7,6 +8,8 @@ venv~
 **/*.py[cod]
 data
 .env
+.env.example
+*.md
 Dockerfile
 docker-compose.yml
 .dockerignore
