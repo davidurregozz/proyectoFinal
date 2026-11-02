@@ -1,5 +1,6 @@
 """Application services and server-side simulation state."""
 
+import os
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -16,6 +17,8 @@ from backend.traffic import (
 
 class TransitService:
     TRAFFIC_REFRESH_SECONDS = 300
+    # TomTom durations are divided by this so buses run 60 % faster than live traffic.
+    TRAFFIC_SPEED_FACTOR = float(os.environ.get("SIMULADOR_FACTOR_VELOCIDAD", "1.6"))
 
     def __init__(self, database=None):
         self.database = database or Database()
@@ -198,6 +201,13 @@ class TransitService:
         traffic_route = self._traffic_routes.get(route_data["codigo"])
         if traffic_route is None:
             return route_data
+        traffic_route = {
+            **traffic_route,
+            **{
+                key: [seconds / self.TRAFFIC_SPEED_FACTOR for seconds in traffic_route[key]]
+                for key in ("duraciones_tramos_ida_s", "duraciones_tramos_regreso_s")
+            },
+        }
         return {**route_data, **traffic_route}
 
     @staticmethod

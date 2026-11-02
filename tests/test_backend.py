@@ -41,6 +41,20 @@ class BackendTests(unittest.TestCase):
         self.assertIn("speed_kmh", snapshot["arrivals"][0])
         self.assertIn("clock", snapshot)
 
+    def test_traffic_durations_are_scaled_by_speed_factor(self):
+        service = TransitService(self.database)
+        route = self.database.list_routes()[0]
+        service._traffic_routes[route["codigo"]] = {
+            "duraciones_tramos_ida_s": [160.0],
+            "duraciones_tramos_regreso_s": [320.0],
+        }
+
+        scaled = service._route_with_traffic(route)
+
+        factor = TransitService.TRAFFIC_SPEED_FACTOR
+        self.assertEqual(scaled["duraciones_tramos_ida_s"], [160.0 / factor])
+        self.assertEqual(scaled["duraciones_tramos_regreso_s"], [320.0 / factor])
+
     def test_snapshot_uses_cached_live_traffic_route(self):
         service = TransitService(self.database)
         route = self.database.list_routes()[0]
@@ -61,7 +75,7 @@ class BackendTests(unittest.TestCase):
         self.assertTrue(optimized["traffic_applied"])
         self.assertEqual(
             optimized["duraciones_tramos_ida_s"],
-            traffic_route["duraciones_tramos_ida_s"],
+            [120.0 / TransitService.TRAFFIC_SPEED_FACTOR] * 6,
         )
 
     def test_refresh_uses_provider_and_keeps_saved_routes_on_failure(self):

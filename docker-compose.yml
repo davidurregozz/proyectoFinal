@@ -9,6 +9,8 @@ services:
     environment:
       # Optional; taken from the host environment or .env, never stored in the image.
       TOMTOM_API_KEY: ${TOMTOM_API_KEY:-}
+      # Buses run this many times faster than TomTom live traffic (1.6 = +60 %).
+      SIMULADOR_FACTOR_VELOCIDAD: ${SIMULADOR_FACTOR_VELOCIDAD:-1.6}
     volumes:
       - simulador-data:/app/data
     restart: unless-stopped

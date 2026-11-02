@@ -552,7 +552,7 @@ class Simulador(tk.Tk):
                 tab_ruta, 1, "Municipio:", MUNICIPIOS, MUNICIPIOS[0]
             ),
             "velocidad": agregar_campo(
-                tab_ruta, 2, "Velocidad (km/h):", valor_inicial="32"
+                tab_ruta, 2, "Velocidad (km/h):", valor_inicial="51"
             ),
             "buses": agregar_campo(
                 tab_ruta, 3, "Cantidad de buses:", valor_inicial="1"
