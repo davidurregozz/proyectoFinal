@@ -51,8 +51,8 @@
     "tests/test_movil.py": "8be6a8a801f198e7a27b2c511378e56bc193677e69d4910b43e2af80e41fb071",
     "tests/test_traffic.py": "a855b3aaf9321bd18ec33f12d51155dbf7780edc4447ce3c22fb0f25467d7a89"
   },
-  "commit": "2b9ef88c0469690b8ae85f2aa0a56854a78978c1",
-  "fecha": "2026-11-14T21:12:39+00:00",
+  "commit": "3fa12f07e4ad7b3d70abee659494925f4acec947",
+  "fecha": "2026-11-14T21:16:17+00:00",
   "firmante": "master",
   "huella_clave": "a3b8:3245:feb9:463b:217e:3fe8:ae05:96b1",
   "version": 1
