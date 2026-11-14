@@ -60,6 +60,7 @@ frontend/
   theme.py         Tema oscuro
   run.py           Arranque del dashboard
 movil/             App web para celular (index.html, app.js, estilos.css, manifest)
+firma/             Firma digital del código (Ed25519): claves, manifiesto y firma
 docker/            Scripts de noVNC, red local (Windows) y enlaces de internet
 tests/             Pruebas unitarias
 start.py           Arranca backend y dashboard juntos, sin Docker
@@ -175,6 +176,36 @@ docker compose --profile test run --rm tests
 # o sin Docker
 py -m unittest discover tests
 ```
+
+## Firma digital del código
+
+El código se puede firmar con **Ed25519** para comprobar quién lo publicó y que
+ningún archivo cambió después. Se calcula el SHA-256 de cada archivo del
+proyecto, se guardan en `firma/manifiesto.json` y ese manifiesto se firma con
+la clave privada (`firma/manifiesto.sig`).
+
+```powershell
+py -m firma.firma_digital generar-claves   # una sola vez; pide una contraseña
+py -m firma.firma_digital firmar           # después de cada cambio, antes del commit
+py -m firma.firma_digital verificar        # en cualquier equipo
+```
+
+| Archivo | ¿Se sube? | Para qué |
+|---|---|---|
+| `firma/clave_privada.pem` | **No** (está en `.gitignore` y `.dockerignore`) | Firmar. Guárdala en un lugar seguro. |
+| `firma/clave_publica.pem` | Sí | Verificar la firma. |
+| `firma/manifiesto.json`, `firma/manifiesto.sig` | Sí | Hashes de los archivos y su firma. |
+
+`verificar` indica los archivos modificados, faltantes o nuevos y termina con
+código 1 si algo no coincide. La contraseña también se puede pasar con la
+variable `FIRMA_CONTRASENA`. Los saltos de línea CRLF cuentan como LF, así que
+la firma hecha en Windows también se verifica en Linux y en Docker.
+
+Para que la verificación valga de verdad, comparte la **huella** de la clave
+pública (la muestran los tres comandos) por un medio aparte, o verifica con una
+copia de confianza de la clave: `verificar --clave ruta/clave_publica.pem`. Si
+alguien cambia el código y también la clave del repositorio, la huella ya no
+coincide.
 
 ## Comandos útiles
 

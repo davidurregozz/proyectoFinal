@@ -5,3 +5,6 @@ data/*.sqlite3-*
 
 # Claves locales; nunca se suben al repositorio.
 .env
+
+# Clave privada de la firma digital; nunca se sube ni entra en Docker.
+firma/clave_privada.pem

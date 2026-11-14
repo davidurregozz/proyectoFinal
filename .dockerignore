@@ -13,3 +13,4 @@ data
 Dockerfile
 docker-compose.yml
 .dockerignore
+firma/clave_privada.pem
