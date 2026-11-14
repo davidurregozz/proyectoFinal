@@ -1,5 +1,17 @@
+# Endurecimiento común: sin privilegios extra ni capacidades de Linux.
+x-seguridad: &seguridad
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
 services:
   backend:
+    <<: *seguridad
+    # Sistema de archivos de solo lectura; solo /app/data (volumen) y /tmp se escriben.
+    read_only: true
+    tmpfs:
+      - /tmp
     build:
       context: .
       target: backend
@@ -10,6 +22,8 @@ services:
     environment:
       # Optional; taken from the host environment or .env, never stored in the image.
       TOMTOM_API_KEY: ${TOMTOM_API_KEY:-}
+      # Token para crear o borrar rutas y vehículos. Vacío: se genera en /app/data/api_token.
+      SIMULADOR_API_TOKEN: ${SIMULADOR_API_TOKEN:-}
       # Buses run this many times faster than TomTom live traffic (1.6 = +60 %).
       SIMULADOR_FACTOR_VELOCIDAD: ${SIMULADOR_FACTOR_VELOCIDAD:-1.6}
       # Traffic hexagons: every hexagon on the routes is measured (TRAFICO_HEX_MAX is
@@ -25,6 +39,7 @@ services:
 
   # Tkinter dashboard in the browser: http://localhost:6080
   frontend:
+    <<: *seguridad
     build:
       context: .
       target: dashboard-web
@@ -34,12 +49,17 @@ services:
       - "${SIMULADOR_IP_PUBLICA:-127.0.0.1}:6080:6080"
     environment:
       SIMULADOR_API_URL: http://backend:8000
+      SIMULADOR_API_TOKEN: ${SIMULADOR_API_TOKEN:-}
+      SIMULADOR_TOKEN_PATH: /app/data/api_token
       VNC_PASSWORD: ${VNC_PASSWORD:-}
       MAPA_PROVEEDOR: ${MAPA_PROVEEDOR:-}
       STADIA_MAPS_API_KEY: ${STADIA_MAPS_API_KEY:-}
       CARTO_API_KEY: ${CARTO_API_KEY:-}
       ARCGIS_API_KEY: ${ARCGIS_API_KEY:-}
     shm_size: "256m"
+    volumes:
+      # Solo lectura: el dashboard toma de aquí el token que generó el backend.
+      - simulador-data:/app/data:ro
     depends_on:
       backend:
         condition: service_healthy
@@ -49,13 +69,18 @@ services:
   # Start with: docker compose --profile gui up dashboard
   # Requires VcXsrv/X410 on Windows (access control disabled) or XQuartz on macOS.
   dashboard:
+    <<: *seguridad
     build:
       context: .
       target: dashboard
     image: simulador-buses-dashboard
     profiles: ["gui"]
+    volumes:
+      - simulador-data:/app/data:ro
     environment:
       SIMULADOR_API_URL: http://backend:8000
+      SIMULADOR_API_TOKEN: ${SIMULADOR_API_TOKEN:-}
+      SIMULADOR_TOKEN_PATH: /app/data/api_token
       DISPLAY: ${DISPLAY:-host.docker.internal:0.0}
       MAPA_PROVEEDOR: ${MAPA_PROVEEDOR:-}
       STADIA_MAPS_API_KEY: ${STADIA_MAPS_API_KEY:-}
@@ -70,6 +95,7 @@ services:
   # every start; show it with: sh docker/enlaces-internet.sh
   # Mobile app (read-only from the internet): docker compose --profile internet up -d
   tunel-app:
+    <<: *seguridad
     image: cloudflare/cloudflared:2026.9.3
     profiles: ["internet"]
     command: tunnel --no-autoupdate --url http://backend:8000
@@ -80,6 +106,7 @@ services:
 
   # Admin dashboard, only when needed: add --profile internet-panel
   tunel-panel:
+    <<: *seguridad
     image: cloudflare/cloudflared:2026.9.3
     profiles: ["internet-panel"]
     # It can edit routes: publish it only with VNC_PASSWORD set in .env.

@@ -24,6 +24,11 @@ USER app
 # Unit tests: docker compose --profile test run --rm tests
 FROM base AS test
 
+COPY requirements-dev.txt .
+USER root
+RUN pip install -r requirements-dev.txt
+USER app
+COPY --chown=app:app firma ./firma
 COPY --chown=app:app tests ./tests
 
 CMD ["python", "-m", "unittest", "discover", "tests"]

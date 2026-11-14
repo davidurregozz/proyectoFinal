@@ -60,6 +60,7 @@ def main():
                 host,
                 "--port",
                 "8000",
+                "--no-server-header",
             ]
         )
         for _ in range(40):

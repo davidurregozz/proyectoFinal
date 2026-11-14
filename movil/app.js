@@ -154,7 +154,7 @@ function dibujarRutas() {
   capaParadas.clearLayers();
   for (const ruta of rutas) {
     L.polyline(trazado(ruta), { pane: "rutas", color: ruta.color, weight: 5, opacity: 0.9 })
-      .bindTooltip(ruta.nombre, { sticky: true })
+      .bindTooltip(escapar(ruta.nombre), { sticky: true })
       .addTo(capaRutas);
   }
   for (const parada of estado.datos.stops) {
@@ -169,7 +169,7 @@ function dibujarRutas() {
       fillColor: "#ffffff",
       fillOpacity: 1,
     })
-      .bindTooltip(parada.nombre)
+      .bindTooltip(escapar(parada.nombre))
       .on("click", () => elegirParada(parada.nombre, true))
       .addTo(capaParadas);
   }
@@ -276,7 +276,8 @@ function dibujarBuses() {
 
 function textoBus(nombre) {
   const bus = estado.datos.buses.find((b) => b.name === nombre);
-  return bus ? `${bus.name} · ${bus.speed_kmh.toFixed(1)} km/h · ${bus.next_stop} en ${bus.remaining_text}` : nombre;
+  // Leaflet inserta el tooltip como HTML: todo texto de la API se escapa.
+  return escapar(bus ? `${bus.name} · ${bus.speed_kmh.toFixed(1)} km/h · ${bus.next_stop} en ${bus.remaining_text}` : nombre);
 }
 
 function encuadrar() {

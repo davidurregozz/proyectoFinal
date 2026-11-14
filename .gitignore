@@ -8,3 +8,5 @@ data/*.sqlite3-*
 
 # Clave privada de la firma digital; nunca se sube ni entra en Docker.
 firma/clave_privada.pem
+# Token de administración de la API, generado por el backend.
+data/api_token

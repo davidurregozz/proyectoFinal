@@ -43,6 +43,8 @@ Tiene tres partes que comparten la misma API:
 
 ```
 backend/
+  seguridad.py     Token, límites por IP, cabeceras de seguridad y registro de rechazos
+  auditoria_seguridad.py  Revisión de secretos, configuración, firma y dependencias
   api.py           API REST, app móvil en /movil/ y bloqueo de escrituras desde internet
   service.py       Estado en vivo: buses, llegadas, tráfico y contador de ingresos
   simulation.py    Movimiento de los buses sobre su ruta según la hora
@@ -81,6 +83,7 @@ Todas las claves son opcionales. Las principales:
 |---|---|
 | `TOMTOM_API_KEY` | Rutas sobre vías reales y tráfico real. Sin ella se usa la geometría guardada de cada ruta y no hay hexágonos de tráfico. |
 | `VNC_PASSWORD` | Contraseña del dashboard en el navegador. Es obligatoria si se abre a la red o a internet. |
+| `SIMULADOR_API_TOKEN` | Token para crear o borrar rutas y vehículos. Vacío: se genera solo en `data/api_token`. |
 | `SIMULADOR_IP_PUBLICA=0.0.0.0` | Con Docker, abre los puertos a la red local. |
 | `SIMULADOR_HOST=0.0.0.0` | Lo mismo, sin Docker. |
 | `TOMTOM_CUOTA_DIARIA`, `TOMTOM_HORAS_USO`, `TOMTOM_REFRESCO_S` | Regulan cada cuánto se consulta el tráfico para no pasar la cuota gratuita de 2.500 consultas al día. |
@@ -159,15 +162,16 @@ contraseña.
 |---|---|---|
 | GET | `/api/health` | Estado del servicio |
 | GET | `/api/dashboard` | Estado completo: rutas, buses, llegadas, paradas, reloj, tráfico, hexágonos e ingresos |
-| POST | `/api/routes` | Crear una ruta |
-| DELETE | `/api/routes/{code}` | Eliminar una ruta |
-| DELETE | `/api/routes/{code}/buses` | Quitar un bus de una ruta |
-| POST | `/api/vehicles` | Registrar un vehículo |
-| DELETE | `/api/vehicles/{plate}` | Eliminar un vehículo |
+| POST | `/api/routes` | Crear una ruta 🔒 |
+| DELETE | `/api/routes/{code}` | Eliminar una ruta 🔒 |
+| DELETE | `/api/routes/{code}/buses` | Quitar un bus de una ruta 🔒 |
+| POST | `/api/vehicles` | Registrar un vehículo 🔒 |
+| DELETE | `/api/vehicles/{plate}` | Eliminar un vehículo 🔒 |
 | POST | `/api/visitas` | Registrar un ingreso a la app móvil |
 | GET | `/movil/` | App móvil (`/` redirige aquí) |
 
-La documentación interactiva está en `/docs`.
+🔒 Requiere el token (`Authorization: Bearer …`). La documentación interactiva
+está en `/docs`, solo desde la red local.
 
 ## Pruebas
 
@@ -175,6 +179,32 @@ La documentación interactiva está en `/docs`.
 docker compose --profile test run --rm tests
 # o sin Docker
 py -m unittest discover tests
+```
+
+## Seguridad
+
+Las protecciones están en `backend/seguridad.py` y se explican en detalle en
+[SECURITY.md](SECURITY.md):
+
+- Crear o borrar rutas y vehículos exige un token. El dashboard lo envía solo.
+- Desde internet la app es de solo lectura y no muestra `/docs`.
+- Hay límites de peticiones por IP, de tamaño de las peticiones y de bloqueo
+  tras varios tokens incorrectos.
+- Todas las respuestas llevan cabeceras de seguridad (CSP, anti-clickjacking, HSTS).
+- Los contenedores corren sin root, sin capacidades y el backend con el sistema
+  de archivos de solo lectura.
+
+Antes de abrir la app a la red, ejecuta la auditoría:
+
+```powershell
+py -m pip install -r requirements-dev.txt
+py -m backend.auditoria_seguridad
+```
+
+Para usar la API a mano, el token está en `data/api_token`:
+
+```bash
+curl -X DELETE http://localhost:8000/api/vehicles/ABC123 -H "Authorization: Bearer $(cat data/api_token)"
 ```
 
 ## Firma digital del código

@@ -11,7 +11,8 @@ def main():
     load_env_file()
     host = os.environ.get("SIMULADOR_HOST") or "127.0.0.1"
     port = int(os.environ.get("SIMULADOR_PORT", "8000"))
-    uvicorn.run("backend.api:app", host=host, port=port)
+    # Sin cabecera "server: uvicorn": no se anuncia el software del servidor.
+    uvicorn.run("backend.api:app", host=host, port=port, server_header=False)
 
 
 if __name__ == "__main__":

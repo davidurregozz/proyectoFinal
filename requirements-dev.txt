@@ -1,0 +1,4 @@
+# Solo para pruebas y auditoría: py -m pip install -r requirements-dev.txt
+-r requirements.txt
+httpx>=0.27
+pip-audit>=2.7

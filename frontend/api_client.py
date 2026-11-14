@@ -6,26 +6,32 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
+from backend.seguridad import leer_token
+
 
 class ApiError(RuntimeError):
     """A network failure or explicit error response from the backend."""
 
 
 class ApiClient:
-    def __init__(self, base_url=None, timeout=2):
+    def __init__(self, base_url=None, timeout=2, token=None):
         if base_url is None:
             base_url = os.environ.get("SIMULADOR_API_URL", "http://127.0.0.1:8000")
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self._token = token
+
+    @property
+    def token(self):
+        # Se lee en cada cambio: el backend puede crear el archivo después de abrir el dashboard.
+        return self._token or leer_token()
 
     def _request(self, method, path, payload=None):
         body = None if payload is None else json.dumps(payload).encode("utf-8")
-        request = Request(
-            self.base_url + path,
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method=method,
-        )
+        headers = {"Content-Type": "application/json"}
+        if method != "GET" and self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        request = Request(self.base_url + path, data=body, headers=headers, method=method)
         try:
             with urlopen(request, timeout=self.timeout) as response:
                 return json.loads(response.read().decode("utf-8"))
@@ -51,7 +57,7 @@ class ApiClient:
         return self._request("POST", "/api/routes", route)
 
     def delete_route(self, code):
-        return self._request("DELETE", f"/api/routes/{code}")
+        return self._request("DELETE", f"/api/routes/{quote(code, safe='')}")
 
     def remove_route_bus(self, code):
         return self._request("DELETE", f"/api/routes/{quote(code, safe='')}/buses")

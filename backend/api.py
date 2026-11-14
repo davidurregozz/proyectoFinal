@@ -6,29 +6,34 @@ from pathlib import Path
 import sqlite3
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi import Depends, FastAPI, HTTPException, Path as PathParam, Query, Request, status
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
+from backend.seguridad import SeguridadMiddleware, cargar_o_crear_token, is_internet_write
 from backend.service import TransitService
+
+NombreParada = Annotated[str, StringConstraints(min_length=1, max_length=100)]
+MAX_PARADAS = 200
+MAX_PUNTOS_TRAZADO = 20_000
 
 
 class RouteInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    codigo: str = Field(min_length=2, max_length=12) 
-
-    
+    codigo: str = Field(min_length=2, max_length=12, pattern=r"^[A-Za-z0-9_-]+$")
     nombre: str = Field(min_length=3, max_length=100)
     municipio: str = Field(min_length=1, max_length=60)
     color: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")
     velocidad_kmh: float = Field(gt=0, le=120)
     buses: int = Field(gt=0, le=100)
     circular: bool
-    paradas: list[tuple[str, float, float]] = Field(min_length=2)
-    coordenadas: list[tuple[float, float]] = Field(min_length=2)
-    coordenadas_regreso: list[tuple[float, float]] = Field(default_factory=list)
+    paradas: list[tuple[NombreParada, float, float]] = Field(min_length=2, max_length=MAX_PARADAS)
+    coordenadas: list[tuple[float, float]] = Field(min_length=2, max_length=MAX_PUNTOS_TRAZADO)
+    coordenadas_regreso: list[tuple[float, float]] = Field(
+        default_factory=list, max_length=MAX_PUNTOS_TRAZADO
+    )
 
     @field_validator("codigo", "nombre", "municipio")
     @classmethod
@@ -96,6 +101,7 @@ class VehicleInput(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app):
+    cargar_o_crear_token()  # el dashboard lo lee del mismo archivo
     service = TransitService()
     service.start_traffic_refresh()
     app.state.transit_service = service
@@ -107,32 +113,9 @@ async def lifespan(app):
 
 app = FastAPI(title="Visualización de rutas de buses", version="1.0.0", lifespan=lifespan)
 
-READ_METHODS = {"GET", "HEAD", "OPTIONS"}
-# Counting a visit to the mobile app changes no route or vehicle.
-INTERNET_WRITE_ALLOWED = {"/api/visitas"}
-
-
-def is_internet_write(method, path, headers):
-    """
-    True for a change (create, edit, delete) arriving from the internet. Cloudflare
-    adds CF-Connecting-IP to everything it forwards and a client cannot remove it;
-    the dashboard talks to the backend over Docker's own network, without it.
-    """
-    return (
-        method.upper() not in READ_METHODS
-        and path not in INTERNET_WRITE_ALLOWED
-        and "cf-connecting-ip" in headers
-    )
-
-
-@app.middleware("http")
-async def read_only_from_internet(request: Request, call_next):
-    if is_internet_write(request.method, request.url.path, request.headers):
-        return JSONResponse(
-            status_code=status.HTTP_403_FORBIDDEN,
-            content={"detail": "Desde internet la aplicación es de solo lectura."},
-        )
-    return await call_next(request)
+# Autenticación, límites, cabeceras y solo lectura desde internet: backend/seguridad.py
+app.add_middleware(SeguridadMiddleware)
+__all__ = ["app", "is_internet_write", "MOBILE_DIR"]
 
 
 def get_service(request: Request) -> TransitService:
@@ -154,7 +137,7 @@ def register_visit(service: ServiceDependency):
 
 
 @app.get("/api/dashboard")
-def dashboard(service: ServiceDependency, parada: str = ""):
+def dashboard(service: ServiceDependency, parada: Annotated[str, Query(max_length=100)] = ""):
     return service.snapshot(parada)
 
 
@@ -172,7 +155,7 @@ def create_route(route: RouteInput, service: ServiceDependency):
 
 
 @app.delete("/api/routes/{code}")
-def delete_route(code: str, service: ServiceDependency):
+def delete_route(code: Annotated[str, PathParam(max_length=12)], service: ServiceDependency):
     try:
         service.delete_route(code)
     except ValueError as error:
@@ -183,7 +166,7 @@ def delete_route(code: str, service: ServiceDependency):
 
 
 @app.delete("/api/routes/{code}/buses")
-def remove_route_bus(code: str, service: ServiceDependency):
+def remove_route_bus(code: Annotated[str, PathParam(max_length=12)], service: ServiceDependency):
     try:
         service.remove_route_bus(code)
     except ValueError as error:
@@ -205,7 +188,7 @@ def create_vehicle(vehicle: VehicleInput, service: ServiceDependency):
 
 
 @app.delete("/api/vehicles/{plate}")
-def delete_vehicle(plate: str, service: ServiceDependency):
+def delete_vehicle(plate: Annotated[str, PathParam(max_length=20)], service: ServiceDependency):
     try:
         service.delete_vehicle(plate)
     except LookupError as error:
