@@ -14,9 +14,20 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_vali
 from backend.seguridad import SeguridadMiddleware, cargar_o_crear_token, is_internet_write
 from backend.service import TransitService
 
+__all__ = ["app", "is_internet_write", "MOBILE_DIR"]
+
 NombreParada = Annotated[str, StringConstraints(min_length=1, max_length=100)]
 MAX_PARADAS = 200
 MAX_PUNTOS_TRAZADO = 20_000
+# Mobile web app: same API, opened from the phone's browser at /movil/.
+MOBILE_DIR = Path(__file__).resolve().parents[1] / "movil"
+
+
+def coordenada_valida(latitude, longitude):
+    return (
+        math.isfinite(latitude) and math.isfinite(longitude)
+        and -90 <= latitude <= 90 and -180 <= longitude <= 180
+    )
 
 
 class RouteInput(BaseModel):
@@ -51,10 +62,7 @@ class RouteInput(BaseModel):
             normalized_name = name.strip().casefold()
             if not normalized_name or normalized_name in names:
                 raise ValueError("Las paradas deben tener nombres únicos.")
-            if not (
-                math.isfinite(latitude) and math.isfinite(longitude)
-                and -90 <= latitude <= 90 and -180 <= longitude <= 180
-            ):
+            if not coordenada_valida(latitude, longitude):
                 raise ValueError("Las coordenadas de las paradas no son válidas.")
             names.add(normalized_name)
         return stops
@@ -62,12 +70,8 @@ class RouteInput(BaseModel):
     @field_validator("coordenadas", "coordenadas_regreso")
     @classmethod
     def validate_coordinates(cls, coordinates):
-        for latitude, longitude in coordinates:
-            if not (
-                math.isfinite(latitude) and math.isfinite(longitude)
-                and -90 <= latitude <= 90 and -180 <= longitude <= 180
-            ):
-                raise ValueError("Las coordenadas del trazado no son válidas.")
+        if not all(coordenada_valida(lat, lon) for lat, lon in coordinates):
+            raise ValueError("Las coordenadas del trazado no son válidas.")
         return coordinates
 
 
@@ -115,7 +119,6 @@ app = FastAPI(title="Visualización de rutas de buses", version="1.0.0", lifespa
 
 # Autenticación, límites, cabeceras y solo lectura desde internet: backend/seguridad.py
 app.add_middleware(SeguridadMiddleware)
-__all__ = ["app", "is_internet_write", "MOBILE_DIR"]
 
 
 def get_service(request: Request) -> TransitService:
@@ -194,10 +197,6 @@ def delete_vehicle(plate: Annotated[str, PathParam(max_length=20)], service: Ser
     except LookupError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     return {"message": "Vehículo eliminado."}
-
-
-# Mobile web app: same API, opened from the phone's browser at /movil/.
-MOBILE_DIR = Path(__file__).resolve().parents[1] / "movil"
 
 
 @app.get("/", include_in_schema=False)

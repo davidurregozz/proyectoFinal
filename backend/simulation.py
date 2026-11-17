@@ -1,4 +1,4 @@
-"""C?lculo de geometr?as, horarios y posiciones de los buses."""
+"""Cálculo de geometrías, horarios y posiciones de los buses."""
 
 import math
 from bisect import bisect_right

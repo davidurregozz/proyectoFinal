@@ -1,4 +1,4 @@
-"""Widget de mapa con conmutaci?n autom?tica entre proveedores XYZ."""
+"""Widget de mapa con conmutación automática entre proveedores XYZ."""
 
 import io
 import logging
@@ -9,6 +9,7 @@ import tkinter as tk
 from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+
 
 def proveedores_mapa():
     """Devuelve los proveedores XYZ y añade sus claves solo desde el entorno.

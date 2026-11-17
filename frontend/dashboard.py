@@ -3,6 +3,7 @@
 import logging
 import math
 import os
+import threading
 import time
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -45,6 +46,7 @@ class RouteView:
 
 class Simulador(tk.Tk):
     VELOCIDAD_LENTA_KMH = 15        # por debajo, el bus se marca con un banderín rojo
+    INTERVALO_CONSULTA_MS = 500     # cada cuánto se pide el estado al backend
     TODOS_MUNICIPIOS = "Todos"
     # (relleno pastel, borde, texto de la leyenda) de cada nivel de tráfico
     NIVELES_TRAFICO = {
@@ -60,6 +62,7 @@ class Simulador(tk.Tk):
         super().__init__()
         self._pil = (Image, ImageDraw, ImageTk)
         self.api = ApiClient()
+        self._generacion = 0                    # sube con cada estado aplicado
         try:
             snapshot = self.api.dashboard()
         except ApiError as error:
@@ -67,7 +70,6 @@ class Simulador(tk.Tk):
             self.destroy()
             return
         self._apply_snapshot(snapshot)
-        self._last_poll = 0.0
         self._backend_error_reported = False
         proveedores = proveedores_mapa()
         self.colores, self.fuentes = aplicar_tema(self)
@@ -280,6 +282,7 @@ class Simulador(tk.Tk):
         self._render_bus_markers()
 
         self.seleccionar_parada()
+        self.lbl_reloj.config(text=self.snapshot["clock"])
         self._actualizar_estado_trafico()
         self._actualizar_kpis()
         self._actualizar_tabla_trafico()
@@ -287,6 +290,7 @@ class Simulador(tk.Tk):
         self.tick()
 
     def _apply_snapshot(self, snapshot):
+        self._generacion += 1
         self.snapshot = snapshot
         self.rutas = [RouteView(route) for route in snapshot["routes"]]
         self.rutas_por_codigo = {route.codigo: route for route in self.rutas}
@@ -307,12 +311,15 @@ class Simulador(tk.Tk):
                 stop["latitud"], stop["longitud"], rutas
             )
 
-    def _refresh_dashboard(self):
-        selected_stop = self.cmb_parada.get() if hasattr(self, "cmb_parada") else ""
-        snapshot = self.api.dashboard(selected_stop)
+    def _refresh_dashboard(self, snapshot=None):
+        """Aplica un estado del backend; sin 'snapshot' lo pide (tras una acción del usuario)."""
+        if snapshot is None:
+            selected_stop = self.cmb_parada.get() if hasattr(self, "cmb_parada") else ""
+            snapshot = self.api.dashboard(selected_stop)
         self._apply_snapshot(snapshot)
         if not hasattr(self, "mapa"):
             return
+        self.lbl_reloj.config(text=self.snapshot["clock"])
         self._actualizar_estado_trafico()
         self._dibujar_zonas_trafico()
         self._actualizar_tabla_trafico()
@@ -1390,55 +1397,81 @@ class Simulador(tk.Tk):
 
     # ── Bucle principal ────────────────────────────────────────────────
     def tick(self):
-        """Polls the backend for simulation positions and arrival estimates."""
-        ahora = time.monotonic()
-        polled = False
-        if ahora - self._last_poll >= 0.5:
+        """
+        Pide al backend posiciones y llegadas en un hilo aparte, para que la
+        ventana no se congele si el backend tarda o no responde. Tkinter solo
+        se toca desde este hilo: el resultado se recoge en _recibir_consulta.
+        """
+        parada = self.cmb_parada.get()
+        consulta = {"parada": parada, "generacion": self._generacion,
+                    "inicio": time.monotonic()}
+
+        def pedir():
             try:
-                self._refresh_dashboard()
-                self._last_poll = ahora
-                self._backend_error_reported = False
-                polled = True
+                consulta["snapshot"] = self.api.dashboard(parada)
             except ApiError as error:
-                if not self._backend_error_reported:
-                    messagebox.showerror("Backend no disponible", str(error), parent=self)
-                    self._backend_error_reported = True
-        self.lbl_reloj.config(text=self.snapshot["clock"])
-        for name, marker in self.marcadores:
-            bus = next((item for item in self.buses if item["name"] == name), None)
-            if bus:
-                marker.set_position(bus["latitude"], bus["longitude"])
-        if polled:
-            self._actualizar_estado_mapa()
-        self.after(80, self.tick)
+                consulta["error"] = error
+
+        consulta["hilo"] = threading.Thread(target=pedir, name="consulta-backend", daemon=True)
+        consulta["hilo"].start()
+        self.after(30, self._recibir_consulta, consulta)
+
+    def _recibir_consulta(self, consulta):
+        if consulta["hilo"].is_alive():
+            self.after(30, self._recibir_consulta, consulta)
+            return
+        # Si mientras tanto el usuario cambió de parada o hizo un cambio (que ya
+        # aplicó un estado más nuevo), esta respuesta quedó vieja y se descarta.
+        vigente = (
+            consulta["generacion"] == self._generacion
+            and consulta["parada"] == self.cmb_parada.get()
+        )
+        try:
+            if "error" in consulta:
+                raise consulta["error"]
+            if vigente:
+                self._refresh_dashboard(consulta["snapshot"])
+                self._actualizar_estado_mapa()
+            self._backend_error_reported = False
+        except ApiError as error:
+            if not self._backend_error_reported:
+                self._backend_error_reported = True
+                messagebox.showerror("Backend no disponible", str(error), parent=self)
+        transcurrido_ms = (time.monotonic() - consulta["inicio"]) * 1000
+        espera = self.INTERVALO_CONSULTA_MS - transcurrido_ms if vigente else 0
+        self.after(max(10, int(espera)), self.tick)
 
     def actualizar_tablas(self):
-        self.tabla_llegadas.delete(*self.tabla_llegadas.get_children())
-        visible_arrivals = (
-            arrival for arrival in self.snapshot["arrivals"]
+        llegadas = [
+            (arrival["route_code"], (
+                arrival["name"], arrival["direction"],
+                arrival["remaining_text"], arrival["arrival_time"],
+                f"{arrival['speed_kmh']:.1f} km/h",
+            ))
+            for arrival in self.snapshot["arrivals"]
             if self._ruta_visible(arrival["route_code"])
-        )
-        for fila, arrival in enumerate(visible_arrivals):
-            self.tabla_llegadas.insert(
-                "", "end", tags=(arrival["route_code"], "alterna" if fila % 2 else ""),
-                values=(
-                    arrival["name"], arrival["direction"],
-                    arrival["remaining_text"], arrival["arrival_time"],
-                    f"{arrival['speed_kmh']:.1f} km/h",
-                )
-            )
-        self.tabla_buses.delete(*self.tabla_buses.get_children())
-        buses_visibles = [
-            bus for bus in self.buses
+        ]
+        buses = [
+            (bus["route_code"], (
+                bus["name"], bus["next_stop"], bus["remaining_text"],
+                bus["arrival_time"], f"{bus['speed_kmh']:.1f} km/h",
+            ))
+            for bus in self.buses
             if self._ruta_visible(bus["route_code"])
         ]
-        for fila, bus in enumerate(buses_visibles):
-            self.tabla_buses.insert(
-                "", "end", tags=(bus["route_code"], "alterna" if fila % 2 else ""),
-                values=(
-                    bus["name"], bus["next_stop"], bus["remaining_text"],
-                    bus["arrival_time"], f"{bus['speed_kmh']:.1f} km/h",
-                )
+        self._llenar_tabla(self.tabla_llegadas, llegadas)
+        self._llenar_tabla(self.tabla_buses, buses)
+
+    def _llenar_tabla(self, tabla, filas):
+        """Reescribe la tabla solo si sus filas cambiaron (evita parpadeos y trabajo)."""
+        if getattr(tabla, "_filas", None) == filas:
+            return
+        tabla._filas = filas
+        tabla.delete(*tabla.get_children())
+        for numero, (codigo, valores) in enumerate(filas):
+            tabla.insert(
+                "", "end", values=valores,
+                tags=(codigo, "alterna") if numero % 2 else (codigo,),
             )
 
     def cambiar_mapa(self, _evento=None):

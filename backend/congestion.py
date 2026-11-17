@@ -1,6 +1,7 @@
 """Zonas de congestión vehicular donde los buses reducen su velocidad."""
 
 import random
+from functools import lru_cache
 
 # Polígono (lat, lon) de la zona; se evalúa con la regla par-impar.
 ZONA_CONGESTION = [
@@ -16,11 +17,12 @@ REDUCCION_MIN = 0.5
 REDUCCION_MAX = 0.7
 
 
+@lru_cache(maxsize=4096)
 def reduccion_para(nombre_bus):
     """
     Reducción aleatoria de velocidad de un bus dentro de la zona.
     Se siembra con el nombre del bus para que el valor sea estable entre
-    consultas y el bus no salte de posición en el mapa.
+    consultas y el bus no salte de posición en el mapa (por eso se cachea).
     """
     return random.Random(f"congestion:{nombre_bus}").uniform(
         REDUCCION_MIN, REDUCCION_MAX

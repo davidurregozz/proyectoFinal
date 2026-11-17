@@ -1,6 +1,5 @@
 """Application services and server-side simulation state."""
 
-import json
 import logging
 import os
 import threading
@@ -70,6 +69,7 @@ class TransitService:
         self._traffic_cells = None          # None: sin medición, se usa la zona simulada
         self._traffic_interval_s = self.TRAFFIC_REFRESH_SECONDS
         self._route_cache = {}
+        self._zone_labels = (None, None, {})    # (celdas, paradas, {id: etiqueta})
         self._traffic_stop = threading.Event()
         self._traffic_refresh_requested = threading.Event()
         self._traffic_thread = None
@@ -184,6 +184,7 @@ class TransitService:
         }
         cells = []
         calls = measured = failures = 0
+        last_error = None
         for cell in celdas_sobre_trazados(trazados, self.HEX_RADIUS_M, self.HEX_MAX):
             speed = None
             for attempt in range(2):
@@ -232,12 +233,12 @@ class TransitService:
 
     def _build_route(self, route_data, zones):
         # Ruta precalcula geometría y horarios; se reutiliza mientras nada cambie.
-        key = json.dumps([route_data, zones], sort_keys=True)
+        # Se comparan los datos directamente (en C), sin serializarlos en cada consulta.
         cached = self._route_cache.get(route_data["codigo"])
-        if cached and cached[0] == key:
-            return cached[1]
+        if cached and cached[0] == route_data and cached[1] == zones:
+            return cached[2]
         route = Ruta(route_data, zones)
-        self._route_cache[route_data["codigo"]] = (key, route)
+        self._route_cache[route_data["codigo"]] = (route_data, zones, route)
         return route
 
     def snapshot(self, selected_stop=""):
@@ -247,13 +248,14 @@ class TransitService:
             elapsed = (
                 clock - clock.replace(hour=0, minute=0, second=0, microsecond=0)
             ).total_seconds()
+            data = self.database.dashboard_data(clock.date().isoformat())
             zones = self._zones()
             routes = [
                 self._build_route(
                     self._route_with_traffic(route_data, free_flow=zones is not None),
                     zones,
                 )
-                for route_data in self.database.list_routes()
+                for route_data in data["routes"]
             ]
             self._route_cache = {
                 route.codigo: self._route_cache[route.codigo] for route in routes
@@ -261,16 +263,20 @@ class TransitService:
             route_data = [self._serialize_route(route) for route in routes]
             routes_by_name = {route.nombre: route for route in routes}
             buses = []
+            buses_per_route = {}
             for route in routes:
                 for number in range(1, route.n_buses + 1):
-                    bus = Bus(route, number, (number - 1) * route.ciclo_s / route.n_buses)
-                    buses.append(bus)
+                    buses.append(
+                        Bus(route, number, (number - 1) * route.ciclo_s / route.n_buses)
+                    )
+                buses_per_route[route.codigo] = route.n_buses
 
             # Los buses propios de cada ruta son buses urbanos; los registrados usan su tipo.
             vehicle_types = {}
-            for vehicle in self.database.list_bus_vehicles():
+            for vehicle in data["bus_vehicles"]:
                 route = routes_by_name[vehicle["ruta"]]
-                bus = Bus(route, len([b for b in buses if b.ruta is route]) + 1, 0)
+                buses_per_route[route.codigo] += 1
+                bus = Bus(route, buses_per_route[route.codigo], 0)
                 bus.nombre = vehicle["placa"]
                 buses.append(bus)
                 vehicle_types[bus.nombre] = vehicle["tipo"]
@@ -314,15 +320,35 @@ class TransitService:
             stops = self._stops(route_data)
             return {
                 "routes": route_data,
-                "vehicles": self.database.list_vehicles(),
+                "vehicles": data["vehicles"],
                 "buses": bus_states,
                 "arrivals": arrivals,
                 "stops": stops,
                 "clock": clock.strftime("%H:%M:%S"),
                 "traffic": dict(self._traffic_status),
                 "traffic_zones": self._serialize_zones(bus_states, stops),
-                "visits": self.database.visit_counts(clock.date().isoformat()),
+                "visits": data["visits"],
             }
+
+    def _labels_for_cells(self, cells, stops):
+        """
+        "Cerca de <parada más cercana>" por hexágono. Solo cambia cuando TomTom
+        mide de nuevo o cambian las paradas, así que se calcula una vez y se reutiliza.
+        """
+        stop_points = [(stop["nombre"], stop["latitud"], stop["longitud"]) for stop in stops]
+        cached_cells, cached_stops, labels = self._zone_labels
+        if cached_cells is cells and cached_stops == stop_points:
+            return labels
+        labels = {}
+        for cell in cells:
+            nearest = min(
+                stop_points,
+                key=lambda stop: distancia_coordenadas_m(cell["centro"], stop[1:]),
+                default=None,
+            )
+            labels[cell["id"]] = f"Cerca de {nearest[0]}" if nearest else cell["id"]
+        self._zone_labels = (cells, stop_points, labels)
+        return labels
 
     def _serialize_zones(self, bus_states, stops):
         def buses_in(polygon):
@@ -352,19 +378,13 @@ class TransitService:
             }
 
         zones = []
+        labels = self._labels_for_cells(self._traffic_cells["cells"], stops)
         for cell in self._traffic_cells["cells"]:
-            nearest = min(
-                stops,
-                key=lambda stop: distancia_coordenadas_m(
-                    cell["centro"], (stop["latitud"], stop["longitud"])
-                ),
-                default=None,
-            )
             zones.append({
                 "id": cell["id"],
                 "polygon": cell["poligono"],
                 "center": cell["centro"],
-                "label": f"Cerca de {nearest['nombre']}" if nearest else cell["id"],
+                "label": labels[cell["id"]],
                 # Los hexágonos fluidos también se envían para pintarlos en el mapa.
                 "severity": cell["severidad"] or "fluido",
                 "current_kmh": cell["current_kmh"],

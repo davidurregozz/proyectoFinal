@@ -20,10 +20,13 @@ DATABASE_PATH = Path(
 class Database:
     def __init__(self, path=DATABASE_PATH):
         self.path = Path(path)
+        self._folder_ready = False
 
     @contextmanager
     def connect(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if not self._folder_ready:              # una vez, no en cada consulta
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self._folder_ready = True
         connection = sqlite3.connect(self.path, timeout=10)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
@@ -231,10 +234,23 @@ class Database:
 
     def list_routes(self):
         with self.connect() as connection:
-            return [
-                self.route_from_row(row)
-                for row in connection.execute("SELECT * FROM routes ORDER BY rowid")
-            ]
+            return self._routes(connection)
+
+    def dashboard_data(self, day):
+        """Todo lo que necesita el tablero en una sola conexión (rutas, flota y visitas)."""
+        with self.connect() as connection:
+            return {
+                "routes": self._routes(connection),
+                "vehicles": self._vehicles(connection),
+                "bus_vehicles": self._bus_vehicles(connection),
+                "visits": self._visit_counts(connection, day),
+            }
+
+    def _routes(self, connection):
+        return [
+            self.route_from_row(row)
+            for row in connection.execute("SELECT * FROM routes ORDER BY rowid")
+        ]
 
     def create_route(self, route):
         with self.connect() as connection:
@@ -255,37 +271,45 @@ class Database:
 
     def list_vehicles(self):
         with self.connect() as connection:
-            return [
-                {
-                    "placa": row["plate"],
-                    "tipo": row["kind"],
-                    "modelo": row["model"],
-                    "capacidad": row["capacity"],
-                    "ruta": row["route_name"],
-                    "conductor": row["driver"],
-                    "estado": row["status"],
-                }
-                for row in connection.execute(
-                    """
-                    SELECT vehicles.*, routes.name AS route_name
-                    FROM vehicles JOIN routes ON routes.code = vehicles.route_code
-                    ORDER BY vehicles.plate
-                    """
-                )
-            ]
+            return self._vehicles(connection)
+
+    @staticmethod
+    def _vehicles(connection):
+        return [
+            {
+                "placa": row["plate"],
+                "tipo": row["kind"],
+                "modelo": row["model"],
+                "capacidad": row["capacity"],
+                "ruta": row["route_name"],
+                "conductor": row["driver"],
+                "estado": row["status"],
+            }
+            for row in connection.execute(
+                """
+                SELECT vehicles.*, routes.name AS route_name
+                FROM vehicles JOIN routes ON routes.code = vehicles.route_code
+                ORDER BY vehicles.plate
+                """
+            )
+        ]
 
     def list_bus_vehicles(self):
         with self.connect() as connection:
-            return [
-                {"placa": row["plate"], "ruta": row["route_name"], "tipo": row["kind"]}
-                for row in connection.execute(
-                    """
-                    SELECT vehicles.plate, vehicles.kind, routes.name AS route_name
-                    FROM vehicles JOIN routes ON routes.code = vehicles.route_code
-                    WHERE vehicles.active_bus = 1
-                    """
-                )
-            ]
+            return self._bus_vehicles(connection)
+
+    @staticmethod
+    def _bus_vehicles(connection):
+        return [
+            {"placa": row["plate"], "ruta": row["route_name"], "tipo": row["kind"]}
+            for row in connection.execute(
+                """
+                SELECT vehicles.plate, vehicles.kind, routes.name AS route_name
+                FROM vehicles JOIN routes ON routes.code = vehicles.route_code
+                WHERE vehicles.active_bus = 1
+                """
+            )
+        ]
 
     def create_vehicle(self, vehicle):
         with self.connect() as connection:
@@ -329,12 +353,16 @@ class Database:
 
     def visit_counts(self, day):
         with self.connect() as connection:
-            row = connection.execute(
-                """
-                SELECT COALESCE(SUM(count), 0) AS total,
-                       COALESCE(SUM(CASE WHEN day = ? THEN count END), 0) AS today
-                FROM app_visits
-                """,
-                (day,),
-            ).fetchone()
-            return {"total": row["total"], "today": row["today"]}
+            return self._visit_counts(connection, day)
+
+    @staticmethod
+    def _visit_counts(connection, day):
+        row = connection.execute(
+            """
+            SELECT COALESCE(SUM(count), 0) AS total,
+                   COALESCE(SUM(CASE WHEN day = ? THEN count END), 0) AS today
+            FROM app_visits
+            """,
+            (day,),
+        ).fetchone()
+        return {"total": row["total"], "today": row["today"]}

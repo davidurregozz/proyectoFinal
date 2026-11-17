@@ -69,7 +69,14 @@ function aclarar(color, proporcion = 0.35) {
   return `rgb(${canales.map((c) => Math.round(c + (255 - c) * proporcion)).join(",")})`;
 }
 
-const rutasPorCodigo = () => new Map(estado.datos.routes.map((r) => [r.codigo, r]));
+// Se arma una vez por respuesta del backend, no en cada consulta de un bus o parada.
+let cacheRutas = { datos: null, mapa: new Map() };
+function rutasPorCodigo() {
+  if (cacheRutas.datos !== estado.datos) {
+    cacheRutas = { datos: estado.datos, mapa: new Map(estado.datos.routes.map((r) => [r.codigo, r])) };
+  }
+  return cacheRutas.mapa;
+}
 
 function enMunicipio(codigo) {
   if (estado.municipio === TODOS) return true;
@@ -147,7 +154,10 @@ function paradasVisibles() {
 // ── Dibujo del mapa ──────────────────────────────────────────────
 function dibujarRutas() {
   const rutas = rutasVisibles();
-  const firma = JSON.stringify([estado.municipio, rutas.map((r) => [r.codigo, r.color, trazado(r).length, trazado(r)[1]])]);
+  const firma = JSON.stringify([estado.municipio, rutas.map((r) => {
+    const linea = trazado(r);
+    return [r.codigo, r.color, linea.length, linea[1]];
+  })]);
   if (firma === estado.firmaRutas) return;
   estado.firmaRutas = firma;
   capaRutas.clearLayers();
